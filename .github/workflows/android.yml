@@ -27,6 +27,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest
 
@@ -60,5 +63,5 @@ jobs:
           body: |
             LaserGRBL Mobile 自动构建 APK。
 
-            这是 Debug APK，适合发给亲友做首次硬件实测。
+            这是 Debug APK，适合首次硬件实测和功能验证。
           files: dist/*.apk

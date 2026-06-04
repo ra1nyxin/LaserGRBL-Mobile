@@ -1,37 +1,246 @@
 # LaserGRBL Mobile
 
-LaserGRBL Mobile 是一个面向 Android 手机的 GRBL / 激光雕刻机上位机。目标是让手机通过 USB OTG 串口连接 GRBL 主控，完成状态监控、手动移动、G-code 文件读取、轨迹预览和稳定流式发送。
+LaserGRBL Mobile 是一个面向 Android 手机的 GRBL / 激光雕刻机上位机。它的目标是让手机通过 USB OTG 串口直接连接 GRBL 主控，把手机当作便携控制端来完成连接、状态监控、手动移动、G-code 文件读取、轨迹预览和任务发送。
 
-> 当前阶段没有实机硬件验证，已经完成核心逻辑单元测试和 Debug APK 构建。第一次实机测试前，请务必低功率、空载或不装激光头验证串口与移动控制。
+这个项目参考了 PC 端 LaserGRBL 的使用场景，但不是 LaserGRBL 官方移动版，也不是对 PC 端界面的简单复制。移动端的重点是：现场能用、界面紧凑、安全确认明确、串口发送稳定。
 
-## 功能
+> 当前阶段还没有真实雕刻机硬件验证，已经完成本地单元测试、Debug APK 构建和 GitHub Actions 自动构建。首次实测请务必低功率、空载，最好先拔掉激光头或关闭激光使能，只验证串口、状态查询和移动控制。
 
-- Android 10+ 到 Android 16，`minSdk 29`，`targetSdk 36`
-- 中文界面，紧凑布局
-- 跟随系统浅色 / 深色主题
-- USB OTG 串口连接，支持常见 CH340 / CP2102 / FTDI / CDC 设备
-- GRBL 状态解析：`Idle`、`Run`、`Hold`、`Alarm`、坐标、进给、激光/主轴值
-- 常用控制：查询、解锁、回零、复位、暂停、继续、关光
-- Jog 手动移动，支持步长选择
-- 弱光测试，带安全确认提示
-- G-code 文件读取，清理注释，估算 XY 范围
-- 简易轨迹预览
-- 按 `ok/error/ALARM` 单行流式发送，优先稳定
-- 发送进度、错误数、当前行、日志
-- 单元测试覆盖 G-code 解析、GRBL 状态解析和基础发送流控
+## 当前状态
+
+- 项目类型：Android / Kotlin / Jetpack Compose
+- 应用名称：LaserGRBL Mobile
+- 包名：`com.x.lasergrbl_mobile`
+- 最低系统：Android 10，`minSdk 29`
+- 目标系统：Android 16 / SDK 36，`targetSdk 36`
+- 串口方式：USB OTG + USB Serial
+- 默认波特率：`115200`
+- 当前构建产物：Debug APK
+- 自动发布：push 后 GitHub Actions 自动测试、构建并发布 APK 到 Release 资产
+
+## 主要功能
+
+### USB 串口连接
+
+- 扫描手机当前可见的 USB 串口设备。
+- 支持常见 USB 串口芯片和 CDC 设备，依赖 `usb-serial-for-android`。
+- 支持 Android USB 权限请求。
+- 连接后持续读取串口输出，按行解析 GRBL 响应。
+- 默认串口参数：
+  - `115200 baud`
+  - `8N1`
+  - 无流控
+
+常见可支持设备类型包括：
+
+- CH340 / CH341
+- CP210x
+- FTDI
+- CDC ACM
+- 其他由 `usb-serial-for-android` 支持的 USB Serial 设备
+
+### GRBL 状态监控
+
+支持解析 GRBL 状态上报，例如：
+
+```text
+<Idle|MPos:0.000,0.000,0.000|FS:0,0>
+<Run|WPos:10.000,5.000,0.000|FS:1200,255>
+```
+
+界面会显示：
+
+- 当前状态：`Idle`、`Run`、`Hold`、`Jog`、`Alarm` 等
+- 机器坐标 `MPos`
+- 工件坐标 `WPos`
+- 进给速度
+- 激光 / 主轴值
+- 原始串口日志
+
+### 常用 GRBL 控制
+
+内置常用按钮：
+
+- 查询状态：`?`
+- 解锁：`$X`
+- 回零：`$H`
+- 软复位：`Ctrl-X`
+- 暂停：`!`
+- 继续：`~`
+- 关光：`M5`
+
+这些按钮尽量保持一键可用，方便现场快速操作。
+
+### Jog 手动移动
+
+支持基础 Jog 控制：
+
+- `X-`
+- `X+`
+- `Y-`
+- `Y+`
+- `Z-`
+- `Z+`
+
+支持步长：
+
+- `0.1 mm`
+- `1.0 mm`
+- `10.0 mm`
+
+发送格式类似：
+
+```text
+$J=G91 G21 X+1.000 F1200
+```
+
+### 激光弱光测试
+
+支持发送：
+
+```text
+M3 S{power}
+```
+
+界面中可以调整 `S1 ~ S1000` 的弱光测试值。
+
+注意：不同 GRBL 固件和激光模块对 `S` 值映射不同，第一次测试必须使用低功率。
+
+### G-code 文件读取
+
+支持通过 Android 文件选择器读取本地文件：
+
+- `.nc`
+- `.gcode`
+- `.txt`
+- 其他文本形式 G-code
+
+读取后会：
+
+- 去除 `;` 注释
+- 去除括号注释 `(comment)`
+- 丢弃空行
+- 统计有效 G-code 行数
+- 估算 XY/Z 运动范围
+- 显示文件名和任务概况
+
+### 轨迹预览
+
+当前版本提供轻量级 2D 轨迹预览：
+
+- 解析 `G0/G1`
+- 提取 `X/Y`
+- 估算边界
+- 在手机界面中绘制简易路径
+
+这不是完整 CNC 仿真器，也不会模拟圆弧、激光功率、材料效果。它的目标是让用户在发送前粗略确认文件范围和路径方向。
+
+### G-code 流式发送
+
+当前采用稳定优先的单行发送策略：
+
+1. 发送一行 G-code
+2. 等待 GRBL 返回 `ok` / `error` / `ALARM`
+3. 收到确认后发送下一行
+
+优点：
+
+- 简单稳定
+- 易于定位错误行
+- 适合首次实机测试
+
+缺点：
+
+- 速度比 PC 端成熟 sender 的缓冲流式发送慢
+
+后续可以升级为 GRBL character-counting streaming，更充分利用 GRBL 接收缓冲区。
+
+### 任务控制
+
+任务发送页提供：
+
+- 开始
+- 暂停
+- 继续
+- 停止
+- 当前行显示
+- 已确认行数
+- 错误计数
+- 进度条
+- 安全确认复选框
+
+如果没有勾选安全确认，不能开始发送任务。
+
+### 手动命令
+
+提供手动命令输入框，可以直接发送：
+
+```text
+$$
+$I
+$X
+G0 X0 Y0
+M5
+```
+
+也可以发送实时指令：
+
+- `!`
+- `~`
+- `?`
+
+## 界面设计
+
+界面是中文优先，布局紧凑，分为几个页面：
+
+- 连接
+- 控制
+- 文件
+- 发送
+- 日志
+
+支持跟随系统浅色 / 深色主题。主题没有使用随机动态色，避免浅色深色切换后文字对比度不可控。
 
 ## 安全提示
 
-- 激光雕刻机有起火和伤眼风险。
-- 首次测试建议拔掉激光头或使用最低功率。
-- 开始任务前确认护目镜、防火、急停、材料固定。
-- 手机断连、OTG 松动、主控复位都可能导致任务中断。
+激光雕刻机有现实风险，不要把它当成普通串口玩具。
+
+首次实测建议：
+
+1. 不装激光头，或关闭激光电源。
+2. 手机连接 OTG，再连接雕刻机 USB。
+3. 打开 App，刷新设备，连接串口。
+4. 先观察 GRBL 启动信息。
+5. 点击 `查询 ?`，确认能收到状态。
+6. 点击 `$X` 解锁。
+7. 用 `0.1 mm` 步长测试 X/Y Jog。
+8. 确认方向和限位没问题后，再测试 `M5`、弱光。
+9. 最后再加载很小的 G-code 文件做空跑。
+
+开始真实雕刻前必须确认：
+
+- 护目镜
+- 防火
+- 急停
+- 材料固定
+- 机器行程
+- G-code 尺寸和原点
+- 激光功率
 
 ## 构建
+
+Windows：
 
 ```powershell
 .\gradlew.bat testDebugUnitTest
 .\gradlew.bat assembleDebug
+```
+
+Linux / macOS：
+
+```bash
+./gradlew testDebugUnitTest
+./gradlew assembleDebug
 ```
 
 Debug APK 输出：
@@ -40,17 +249,65 @@ Debug APK 输出：
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## 依赖
+## GitHub Actions
 
-- Jetpack Compose / Material 3
-- Kotlin
-- usb-serial-for-android
-- kotlinx-coroutines
+仓库包含 `.github/workflows/android.yml`。
+
+每次 push 到 `master` 或 `main` 后会自动：
+
+1. 安装 JDK 17
+2. 运行单元测试
+3. 构建 Debug APK
+4. 上传 APK Artifact
+5. 自动创建随机 tag
+6. 发布 GitHub Release
+7. 把 APK 上传到 Release 资产
+
+Release 资产文件名类似：
+
+```text
+LaserGRBL-Mobile-debug-{commit-sha}.apk
+```
+
+## 单元测试
+
+当前覆盖：
+
+- G-code 注释清理
+- G-code 有效行解析
+- G-code 运动范围估算
+- GRBL 状态解析
+- `ok/error/ALARM` 响应分类
+- 基础单行流式发送逻辑
+
+运行：
+
+```powershell
+.\gradlew.bat testDebugUnitTest
+```
+
+## 当前限制
+
+- 尚未完成真实硬件测试。
+- 当前只支持 USB OTG 串口，不支持蓝牙或 Wi-Fi 串口桥。
+- 当前 G-code 流式发送是保守的一行一确认策略。
+- 当前轨迹预览只覆盖基础 `G0/G1`，不完整模拟圆弧和雕刻效果。
+- 图片 / SVG 转 G-code 尚未完成。
+- 暂未内置材料参数库。
+- 暂未做加工前边界框预跑。
 
 ## 后续计划
 
-- 图片 / SVG 转 G-code
-- 更完整的 GRBL buffer character-counting streaming
-- 材料参数库
-- 加工前边界框预跑
-- 蓝牙 / Wi-Fi 串口桥支持
+优先级建议：
+
+1. 实机验证 USB 串口连接、状态查询、Jog、暂停/继续。
+2. 增加边界框预跑功能。
+3. 增加 character-counting streaming，提高发送效率。
+4. 增加材料参数库。
+5. 增加图片 / SVG 转 G-code。
+6. 增加蓝牙 / Wi-Fi 串口桥支持。
+7. 增加任务历史和最近文件。
+
+## 项目定位
+
+LaserGRBL Mobile 的目标不是替代所有 PC 端专业软件，而是在手机上提供一个足够安全、紧凑、可用的 GRBL 控制和发送工具。它更适合现场调试、轻量加工、临时移动控制和没有电脑时的应急使用。
