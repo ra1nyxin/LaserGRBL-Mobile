@@ -90,6 +90,7 @@ object SvgToGcodeConverter {
         var command: Char? = null
         var current = SvgPoint(0.0, 0.0)
         var subPathStart = current
+        var startsNewSubPath = true
         val segments = mutableListOf<SvgSegment>()
         val unsupported = mutableSetOf<Char>()
 
@@ -114,33 +115,38 @@ object SvgToGcodeConverter {
                     val first = point(number(), number(), current, relative)
                     current = first
                     subPathStart = first
+                    startsNewSubPath = true
                     while (hasNumber()) {
                         val next = point(number(), number(), current, relative)
-                        segments += SvgSegment(current, next, continuesFromPrevious = true)
+                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
                         current = next
+                        startsNewSubPath = false
                     }
                 }
                 'L' -> {
                     while (hasNumber()) {
                         val next = point(number(), number(), current, relative)
-                        segments += SvgSegment(current, next, continuesFromPrevious = true)
+                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
                         current = next
+                        startsNewSubPath = false
                     }
                 }
                 'H' -> {
                     while (hasNumber()) {
                         val x = number()
                         val next = current.copy(x = if (relative) current.x + x else x)
-                        segments += SvgSegment(current, next, continuesFromPrevious = true)
+                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
                         current = next
+                        startsNewSubPath = false
                     }
                 }
                 'V' -> {
                     while (hasNumber()) {
                         val y = number()
                         val next = current.copy(y = if (relative) current.y + y else y)
-                        segments += SvgSegment(current, next, continuesFromPrevious = true)
+                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
                         current = next
+                        startsNewSubPath = false
                     }
                 }
                 'Z' -> {
@@ -148,6 +154,7 @@ object SvgToGcodeConverter {
                         segments += SvgSegment(current, subPathStart, continuesFromPrevious = true)
                         current = subPathStart
                     }
+                    startsNewSubPath = true
                     command = null
                 }
                 else -> {

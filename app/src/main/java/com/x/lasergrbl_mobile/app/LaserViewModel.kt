@@ -1,6 +1,7 @@
 package com.x.lasergrbl_mobile.app
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
@@ -145,10 +146,8 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val resolver = getApplication<Application>().contentResolver
-                val bitmap = resolver.openInputStream(uri)?.use { input ->
-                    BitmapFactory.decodeStream(input)
-                } ?: error("无法解码图片")
-                val raster = bitmap.toGrayRaster(maxLongSide = 900)
+                val bitmap = decodeScaledBitmap(uri, maxLongSide = 900)
+                val raster = bitmap.toGrayRaster()
                 val settings = currentImageSettings()
                 val result = ImageToGcodeConverter.convert(raster, settings)
                 val bounds = GcodeParser.estimateBounds(result.lines)
@@ -389,21 +388,49 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun android.graphics.Bitmap.toGrayRaster(maxLongSide: Int): GrayRaster {
-        val scaled = if (width > maxLongSide || height > maxLongSide) {
-            val ratio = maxLongSide.toDouble() / maxOf(width, height).toDouble()
-            android.graphics.Bitmap.createScaledBitmap(
-                this,
-                (width * ratio).toInt().coerceAtLeast(1),
-                (height * ratio).toInt().coerceAtLeast(1),
-                true,
-            )
-        } else {
-            this
+    private fun decodeScaledBitmap(uri: Uri, maxLongSide: Int): Bitmap {
+        val resolver = getApplication<Application>().contentResolver
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
         }
-        val pixels = IntArray(scaled.width * scaled.height)
+        resolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        } ?: error("无法读取图片")
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            error("无法识别图片尺寸")
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, maxLongSide)
+        }
+        val decoded = resolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, options)
+        } ?: error("无法解码图片")
+        if (decoded.width <= maxLongSide && decoded.height <= maxLongSide) {
+            return decoded
+        }
+
+        val ratio = maxLongSide.toDouble() / maxOf(decoded.width, decoded.height).toDouble()
+        return Bitmap.createScaledBitmap(
+            decoded,
+            (decoded.width * ratio).toInt().coerceAtLeast(1),
+            (decoded.height * ratio).toInt().coerceAtLeast(1),
+            true,
+        )
+    }
+
+    private fun sampleSize(width: Int, height: Int, maxLongSide: Int): Int {
+        var sample = 1
+        while (maxOf(width / sample, height / sample) > maxLongSide * 2) {
+            sample *= 2
+        }
+        return sample
+    }
+
+    private fun Bitmap.toGrayRaster(): GrayRaster {
+        val pixels = IntArray(width * height)
         val gray = IntArray(pixels.size)
-        scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
+        getPixels(pixels, 0, width, 0, 0, width, height)
         for (i in pixels.indices) {
             val color = pixels[i]
             val r = color shr 16 and 0xff
@@ -411,7 +438,7 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
             val b = color and 0xff
             gray[i] = (r * 299 + g * 587 + b * 114) / 1000
         }
-        return GrayRaster(scaled.width, scaled.height, gray)
+        return GrayRaster(width, height, gray)
     }
 
     private fun commandLabel(command: String): String {

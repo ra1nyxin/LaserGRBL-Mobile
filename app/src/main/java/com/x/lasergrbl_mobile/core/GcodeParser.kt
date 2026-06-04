@@ -52,10 +52,7 @@ object GcodeParser {
             val nextX = valueAfter(line.command, 'X') ?: x
             val nextY = valueAfter(line.command, 'Y') ?: y
             val nextZ = valueAfter(line.command, 'Z') ?: z
-            val moves = line.command.contains("G0", true) ||
-                line.command.contains("G1", true) ||
-                line.command.contains("G00", true) ||
-                line.command.contains("G01", true)
+            val moves = isLinearMotion(line.command)
 
             if (moves) {
                 x = nextX
@@ -92,6 +89,17 @@ object GcodeParser {
             .takeWhile { it.isDigit() || it == '-' || it == '+' || it == '.' }
 
         return value.toDoubleOrNull()
+    }
+
+    fun isLinearMotion(command: String): Boolean {
+        val tokens = command
+            .trim()
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+        return tokens.any { token ->
+            val upper = token.uppercase()
+            upper == "G0" || upper == "G00" || upper == "G1" || upper == "G01"
+        }
     }
 }
 

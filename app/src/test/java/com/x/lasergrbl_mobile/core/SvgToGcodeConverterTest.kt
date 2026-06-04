@@ -47,6 +47,19 @@ class SvgToGcodeConverterTest {
     }
 
     @Test
+    fun multipleSubPathsDoNotBurnTravelBetweenShapes() {
+        val svg = """<svg><path d="M0 0 L10 0 M20 0 L30 0"/></svg>"""
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 30.0))
+        val commands = result.lines.map { it.command }
+        val secondStart = commands.indexOf("G0 X20.000 Y0.000 F3000")
+
+        assertTrue(secondStart > 0)
+        assertEquals("M5", commands[secondStart - 1])
+        assertTrue(commands.none { it == "G1 X20.000 Y0.000 S250 F1000" })
+    }
+
+    @Test
     fun generatedSvgGcodeCanBeParsedForBounds() {
         val svg = """<svg><path d="M0,0 L5,0 L5,5"/></svg>"""
 

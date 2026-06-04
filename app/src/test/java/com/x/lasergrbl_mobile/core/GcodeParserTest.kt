@@ -40,4 +40,24 @@ class GcodeParserTest {
         assertEquals(0.0, bounds.minY, 0.001)
         assertEquals(7.0, bounds.maxY, 0.001)
     }
+
+    @Test
+    fun estimateBoundsDoesNotTreatG10AsG1Motion() {
+        val lines = GcodeParser.parse("G10 X999 Y999\nG1 X2 Y3")
+        val bounds = GcodeParser.estimateBounds(lines)
+
+        assertTrue(bounds.hasMotion)
+        assertEquals(2.0, bounds.minX, 0.001)
+        assertEquals(2.0, bounds.maxX, 0.001)
+        assertEquals(3.0, bounds.minY, 0.001)
+        assertEquals(3.0, bounds.maxY, 0.001)
+    }
+
+    @Test
+    fun linearMotionDetectionRequiresExactGToken() {
+        assertTrue(GcodeParser.isLinearMotion("G0 X0"))
+        assertTrue(GcodeParser.isLinearMotion("G01 X1"))
+        assertEquals(false, GcodeParser.isLinearMotion("G10 L20 X0"))
+        assertEquals(false, GcodeParser.isLinearMotion("G17"))
+    }
 }

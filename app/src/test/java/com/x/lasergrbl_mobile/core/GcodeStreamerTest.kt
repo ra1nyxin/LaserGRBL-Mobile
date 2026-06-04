@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -29,6 +30,32 @@ class GcodeStreamerTest {
         collectJob.cancel()
     }
 
+    @Test
+    fun clearsStaleResponsesBeforeStartingNewJob() = runTest {
+        val transport = FakeTransport()
+        val streamer = GcodeStreamer(this, transport)
+
+        streamer.enqueueResponse(Response.Ok)
+        streamer.start(GcodeParser.parse("G0 X0"))
+        waitFor { transport.lines.size == 1 }
+
+        assertEquals(0, streamer.progress.value.acknowledgedLines)
+        streamer.enqueueResponse(Response.Ok)
+        waitFor { streamer.progress.value.acknowledgedLines == 1 }
+    }
+
+    @Test
+    fun writeFailureStopsJobAndEmitsError() = runTest {
+        val transport = FakeTransport(failOnWrite = true)
+        val streamer = GcodeStreamer(this, transport)
+
+        streamer.start(GcodeParser.parse("G0 X0"))
+        waitFor { streamer.progress.value.errorCount == 1 }
+
+        assertEquals(false, streamer.progress.value.running)
+        assertEquals(1, streamer.progress.value.errorCount)
+    }
+
     private suspend fun waitFor(predicate: () -> Boolean) {
         repeat(100) {
             if (predicate()) return
@@ -37,9 +64,12 @@ class GcodeStreamerTest {
         error("condition was not met")
     }
 
-    private class FakeTransport : GrblTransport {
+    private class FakeTransport(
+        private val failOnWrite: Boolean = false,
+    ) : GrblTransport {
         val lines = mutableListOf<String>()
         override suspend fun writeLine(line: String) {
+            if (failOnWrite) error("port closed")
             lines += line
         }
 

@@ -2,6 +2,7 @@ package com.x.lasergrbl_mobile
 
 import android.net.Uri
 import android.os.Bundle
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -66,6 +67,7 @@ import com.x.lasergrbl_mobile.app.LaserUiState
 import com.x.lasergrbl_mobile.app.LaserViewModel
 import com.x.lasergrbl_mobile.core.GcodeBounds
 import com.x.lasergrbl_mobile.core.GcodeLine
+import com.x.lasergrbl_mobile.core.GcodeParser
 import com.x.lasergrbl_mobile.core.MachinePosition
 import com.x.lasergrbl_mobile.ui.theme.LaserGRBLMobileTheme
 
@@ -75,11 +77,30 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        handleIncomingIntent(intent)
         setContent {
             LaserGRBLMobileTheme {
                 val state by viewModel.uiState.collectAsState()
                 LaserApp(state = state, viewModel = viewModel)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        val type = intent.type.orEmpty().lowercase()
+        val path = uri.toString().lowercase()
+        when {
+            type == "image/svg+xml" || path.endsWith(".svg") -> viewModel.loadSvgAsGcode(uri)
+            type.startsWith("image/") -> viewModel.loadImageAsGcode(uri)
+            else -> viewModel.loadGcode(uri)
         }
     }
 }
@@ -452,7 +473,7 @@ private fun GcodePreview(lines: List<GcodeLine>, bounds: GcodeBounds) {
         lines.take(3000).forEach { line ->
             val cx = valueAfter(line.command, 'X') ?: x
             val cy = valueAfter(line.command, 'Y') ?: y
-            if (line.command.startsWith("G0", true) || line.command.startsWith("G1", true)) {
+            if (GcodeParser.isLinearMotion(line.command)) {
                 if (!initialized) {
                     path.moveTo(mapX(cx), mapY(cy))
                     initialized = true
