@@ -1,6 +1,7 @@
 package com.x.lasergrbl_mobile.app
 
 import android.app.Application
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,11 +9,16 @@ import com.x.lasergrbl_mobile.core.GcodeBounds
 import com.x.lasergrbl_mobile.core.GcodeLine
 import com.x.lasergrbl_mobile.core.GcodeParser
 import com.x.lasergrbl_mobile.core.GcodeStreamer
+import com.x.lasergrbl_mobile.core.GrayRaster
 import com.x.lasergrbl_mobile.core.GrblParser
 import com.x.lasergrbl_mobile.core.GrblStatus
+import com.x.lasergrbl_mobile.core.ImageGcodeSettings
+import com.x.lasergrbl_mobile.core.ImageToGcodeConverter
 import com.x.lasergrbl_mobile.core.Response
 import com.x.lasergrbl_mobile.core.StreamEvent
 import com.x.lasergrbl_mobile.core.StreamProgress
+import com.x.lasergrbl_mobile.core.SvgGcodeSettings
+import com.x.lasergrbl_mobile.core.SvgToGcodeConverter
 import com.x.lasergrbl_mobile.serial.SerialDeviceInfo
 import com.x.lasergrbl_mobile.serial.SerialState
 import com.x.lasergrbl_mobile.serial.UsbSerialController
@@ -28,6 +34,8 @@ data class JobFileState(
     val lines: List<GcodeLine> = emptyList(),
     val bounds: GcodeBounds? = null,
     val error: String? = null,
+    val source: String = "G-code",
+    val note: String? = null,
 ) {
     val loaded: Boolean get() = lines.isNotEmpty()
 }
@@ -44,6 +52,14 @@ data class LaserUiState(
     val jogStep: Double = 1.0,
     val feedRate: Int = 1200,
     val laserPower: Int = 50,
+    val imageWidthMm: Double = 30.0,
+    val imageLineStepMm: Double = 0.12,
+    val imageFeedRate: Int = 1200,
+    val imageTravelRate: Int = 3000,
+    val imageMaxPower: Int = 350,
+    val imageThreshold: Int = 18,
+    val imageBidirectional: Boolean = true,
+    val imageInvert: Boolean = false,
     val safetyArmed: Boolean = false,
 )
 
@@ -113,13 +129,83 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
                 val bounds = GcodeParser.estimateBounds(lines)
                 val name = uri.lastPathSegment?.substringAfterLast('/') ?: "G-code 文件"
                 withContext(Dispatchers.Main) {
-                    _uiState.value = _uiState.value.copy(job = JobFileState(name, lines, bounds))
+                    _uiState.value = _uiState.value.copy(job = JobFileState(name, lines, bounds, source = "G-code"))
                     appendLog("已读取 $name，共 ${lines.size} 条有效 G-code。")
                 }
             } catch (t: Throwable) {
                 withContext(Dispatchers.Main) {
                     _uiState.value = _uiState.value.copy(job = JobFileState(error = t.message))
                     appendLog("读取文件失败：${t.message ?: "未知错误"}")
+                }
+            }
+        }
+    }
+
+    fun loadImageAsGcode(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val bitmap = resolver.openInputStream(uri)?.use { input ->
+                    BitmapFactory.decodeStream(input)
+                } ?: error("无法解码图片")
+                val raster = bitmap.toGrayRaster(maxLongSide = 900)
+                val settings = currentImageSettings()
+                val result = ImageToGcodeConverter.convert(raster, settings)
+                val bounds = GcodeParser.estimateBounds(result.lines)
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "图片文件"
+                val note = "已转换 ${raster.width}x${raster.height} 灰度图，烧蚀点 ${result.burnedPixels}，尺寸 ${fmt(result.widthMm)} x ${fmt(result.heightMm)} mm"
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(
+                        job = JobFileState(
+                            fileName = "$name -> G-code",
+                            lines = result.lines,
+                            bounds = bounds,
+                            source = "图片转换",
+                            note = note,
+                        )
+                    )
+                    appendLog(note)
+                }
+            } catch (t: Throwable) {
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(job = JobFileState(error = t.message, source = "图片转换"))
+                    appendLog("图片转换失败：${t.message ?: "未知错误"}")
+                }
+            }
+        }
+    }
+
+    fun loadSvgAsGcode(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                val svg = resolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: error("无法读取 SVG 文件")
+                val result = SvgToGcodeConverter.convert(svg, currentSvgSettings())
+                val bounds = GcodeParser.estimateBounds(result.lines)
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "SVG 文件"
+                val unsupported = if (result.unsupportedCommands.isEmpty()) {
+                    "无"
+                } else {
+                    result.unsupportedCommands.joinToString("")
+                }
+                val note = "已转换 SVG：路径 ${result.pathCount}，线段 ${result.segmentCount}，跳过命令 $unsupported"
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(
+                        job = JobFileState(
+                            fileName = "$name -> G-code",
+                            lines = result.lines,
+                            bounds = bounds,
+                            source = "SVG 转换",
+                            note = note,
+                        )
+                    )
+                    appendLog(note)
+                }
+            } catch (t: Throwable) {
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(job = JobFileState(error = t.message, source = "SVG 转换"))
+                    appendLog("SVG 转换失败：${t.message ?: "未知错误"}")
                 }
             }
         }
@@ -181,6 +267,38 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLaserPower(value: Int) {
         _uiState.value = _uiState.value.copy(laserPower = value.coerceIn(1, 1000))
+    }
+
+    fun setImageWidthMm(value: Double) {
+        _uiState.value = _uiState.value.copy(imageWidthMm = value.coerceIn(1.0, 500.0))
+    }
+
+    fun setImageLineStepMm(value: Double) {
+        _uiState.value = _uiState.value.copy(imageLineStepMm = value.coerceIn(0.03, 2.0))
+    }
+
+    fun setImageFeedRate(value: Int) {
+        _uiState.value = _uiState.value.copy(imageFeedRate = value.coerceIn(10, 20000))
+    }
+
+    fun setImageTravelRate(value: Int) {
+        _uiState.value = _uiState.value.copy(imageTravelRate = value.coerceIn(10, 20000))
+    }
+
+    fun setImageMaxPower(value: Int) {
+        _uiState.value = _uiState.value.copy(imageMaxPower = value.coerceIn(1, 1000))
+    }
+
+    fun setImageThreshold(value: Int) {
+        _uiState.value = _uiState.value.copy(imageThreshold = value.coerceIn(0, 255))
+    }
+
+    fun setImageBidirectional(value: Boolean) {
+        _uiState.value = _uiState.value.copy(imageBidirectional = value)
+    }
+
+    fun setImageInvert(value: Boolean) {
+        _uiState.value = _uiState.value.copy(imageInvert = value)
     }
 
     fun setSafetyArmed(value: Boolean) {
@@ -247,6 +365,55 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         return "%+.3f".format(value)
     }
 
+    private fun currentImageSettings(): ImageGcodeSettings {
+        val state = _uiState.value
+        return ImageGcodeSettings(
+            widthMm = state.imageWidthMm,
+            lineStepMm = state.imageLineStepMm,
+            feedRate = state.imageFeedRate,
+            travelRate = state.imageTravelRate,
+            maxPower = state.imageMaxPower,
+            burnThreshold = state.imageThreshold,
+            bidirectional = state.imageBidirectional,
+            invert = state.imageInvert,
+        )
+    }
+
+    private fun currentSvgSettings(): SvgGcodeSettings {
+        val state = _uiState.value
+        return SvgGcodeSettings(
+            widthMm = state.imageWidthMm,
+            feedRate = state.imageFeedRate,
+            travelRate = state.imageTravelRate,
+            power = state.imageMaxPower,
+        )
+    }
+
+    private fun android.graphics.Bitmap.toGrayRaster(maxLongSide: Int): GrayRaster {
+        val scaled = if (width > maxLongSide || height > maxLongSide) {
+            val ratio = maxLongSide.toDouble() / maxOf(width, height).toDouble()
+            android.graphics.Bitmap.createScaledBitmap(
+                this,
+                (width * ratio).toInt().coerceAtLeast(1),
+                (height * ratio).toInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            this
+        }
+        val pixels = IntArray(scaled.width * scaled.height)
+        val gray = IntArray(pixels.size)
+        scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
+        for (i in pixels.indices) {
+            val color = pixels[i]
+            val r = color shr 16 and 0xff
+            val g = color shr 8 and 0xff
+            val b = color and 0xff
+            gray[i] = (r * 299 + g * 587 + b * 114) / 1000
+        }
+        return GrayRaster(scaled.width, scaled.height, gray)
+    }
+
     private fun commandLabel(command: String): String {
         return when (command) {
             "!" -> "暂停"
@@ -262,3 +429,5 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
     }
 }
+
+private fun fmt(value: Double): String = "%.2f".format(value)

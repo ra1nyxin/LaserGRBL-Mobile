@@ -37,6 +37,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -164,7 +165,7 @@ private fun ConnectPage(state: LaserUiState, viewModel: LaserViewModel) {
             Spacer(Modifier.height(8.dp))
             ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
                 OutlinedTextField(
-                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, true).fillMaxWidth(),
                     value = selected?.let { "${it.name}  VID:${it.vendorId} PID:${it.productId}" } ?: "未发现 USB 串口设备",
                     onValueChange = {},
                     readOnly = true,
@@ -247,18 +248,52 @@ private fun ControlPage(state: LaserUiState, viewModel: LaserViewModel) {
 
 @Composable
 private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+    val gcodeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) viewModel.loadGcode(uri)
+    }
+    val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) viewModel.loadImageAsGcode(uri)
+    }
+    val svgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) viewModel.loadSvgAsGcode(uri)
     }
 
     PageColumn {
-        SectionCard("G-code 文件") {
-            Button(onClick = { launcher.launch(arrayOf("text/*", "application/octet-stream", "*/*")) }) {
-                Text("选择 .nc / .gcode 文件")
+        SectionCard("载入任务") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { gcodeLauncher.launch(arrayOf("text/*", "application/octet-stream", "*/*")) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("选择 G-code")
+                }
+                Button(
+                    onClick = { imageLauncher.launch(arrayOf("image/*")) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("选择图片转换")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { svgLauncher.launch(arrayOf("image/svg+xml", "text/xml", "text/*", "*/*")) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("选择 SVG 转换")
+                }
+                OutlinedButton(
+                    onClick = { },
+                    enabled = false,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("材料预设待加入")
+                }
             }
             Spacer(Modifier.height(8.dp))
             Text("文件：${state.job.fileName}")
+            Text("来源：${state.job.source}")
             Text("有效行数：${state.job.lines.size}")
+            state.job.note?.let { Text(it) }
             state.job.bounds?.let { bounds ->
                 if (bounds.hasMotion) {
                     Text("范围：X ${fmt(bounds.minX)} ~ ${fmt(bounds.maxX)}，Y ${fmt(bounds.minY)} ~ ${fmt(bounds.maxY)}")
@@ -269,8 +304,45 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
             if (state.job.error != null) Text(state.job.error, color = MaterialTheme.colorScheme.tertiary)
         }
 
-        SectionCard("转换功能") {
-            Text("当前版本已支持 G-code 文件读取、清理注释、范围估算和轨迹预览。图片/SVG 转 G-code 将放入下一阶段，避免在没有硬件实测前一次性加入不可控的加工风险。")
+        SectionCard("转换参数") {
+            Text("宽度：${fmt(state.imageWidthMm)} mm")
+            Slider(
+                value = state.imageWidthMm.toFloat(),
+                onValueChange = { viewModel.setImageWidthMm(it.toDouble()) },
+                valueRange = 5f..200f,
+            )
+            Text("行距：${fmt(state.imageLineStepMm)} mm")
+            Slider(
+                value = state.imageLineStepMm.toFloat(),
+                onValueChange = { viewModel.setImageLineStepMm(it.toDouble()) },
+                valueRange = 0.05f..0.5f,
+            )
+            Text("雕刻进给：F${state.imageFeedRate}    空程：F${state.imageTravelRate}")
+            Slider(
+                value = state.imageFeedRate.toFloat(),
+                onValueChange = { viewModel.setImageFeedRate(it.toInt()) },
+                valueRange = 100f..6000f,
+            )
+            Text("最大功率：S${state.imageMaxPower}    阈值：${state.imageThreshold}")
+            Slider(
+                value = state.imageMaxPower.toFloat(),
+                onValueChange = { viewModel.setImageMaxPower(it.toInt()) },
+                valueRange = 1f..1000f,
+            )
+            Slider(
+                value = state.imageThreshold.toFloat(),
+                onValueChange = { viewModel.setImageThreshold(it.toInt()) },
+                valueRange = 0f..255f,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = state.imageBidirectional, onCheckedChange = viewModel::setImageBidirectional)
+                Text("双向扫描")
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = state.imageInvert, onCheckedChange = viewModel::setImageInvert)
+                Text("反相雕刻")
+            }
+            Text("图片会生成 M4 动态功率扫描线；SVG 会把 M/L/H/V/Z 线段转换为矢量雕刻路径。第一次实测建议降低功率并空跑。")
         }
     }
 }
