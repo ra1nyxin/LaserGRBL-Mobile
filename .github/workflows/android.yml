@@ -1,0 +1,64 @@
+name: Android CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/LaserGRBL-Mobile-debug-${{ github.sha }}.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LaserGRBL-Mobile-debug-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Create release tag
+        if: github.event_name == 'push'
+        id: tag
+        run: |
+          echo "tag=auto-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: LaserGRBL Mobile ${{ steps.tag.outputs.tag }}
+          body: |
+            LaserGRBL Mobile 自动构建 APK。
+
+            这是 Debug APK，适合发给亲友做首次硬件实测。
+          files: dist/*.apk
