@@ -90,7 +90,11 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.Dark -> true
             }
             LaserGRBLMobileTheme(darkTheme = darkTheme) {
-                LaserApp(state = state, viewModel = viewModel)
+                LaserApp(
+                    state = state,
+                    viewModel = viewModel,
+                    openUrl = ::openUrl,
+                )
             }
         }
     }
@@ -112,12 +116,22 @@ class MainActivity : ComponentActivity() {
             else -> viewModel.loadGcode(uri)
         }
     }
+
+    private fun openUrl(url: String) {
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+    }
 }
 
 @Composable
-private fun LaserApp(state: LaserUiState, viewModel: LaserViewModel) {
+private fun LaserApp(
+    state: LaserUiState,
+    viewModel: LaserViewModel,
+    openUrl: (String) -> Unit,
+) {
     var tab by remember { mutableIntStateOf(0) }
-    val titles = listOf("连接", "控制", "文件", "发送", "设置", "日志")
+    val titles = listOf("连接", "控制", "文件", "发送", "设置", "日志", "关于")
 
     Scaffold(
         topBar = {
@@ -163,7 +177,8 @@ private fun LaserApp(state: LaserUiState, viewModel: LaserViewModel) {
                 2 -> FilePage(state, viewModel)
                 3 -> SendPage(state, viewModel)
                 4 -> SettingsPage(state, viewModel)
-                else -> LogPage(state)
+                5 -> LogPage(state)
+                else -> AboutPage(openUrl)
             }
         }
     }
@@ -542,6 +557,63 @@ private fun LogPage(state: LaserUiState) {
     ) {
         items(state.log) { line ->
             Text(line, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun AboutPage(openUrl: (String) -> Unit) {
+    PageColumn {
+        SectionCard("LaserGRBL Mobile") {
+            Text("Android 手机端 GRBL / 激光雕刻机上位机。")
+            Text("用于 USB OTG 串口连接、手动控制、G-code 读取、图片 / SVG 转换和任务发送。")
+        }
+
+        SectionCard("项目链接") {
+            LinkButton(
+                title = "仓库",
+                url = "https://github.com/ra1nyxin/LaserGRBL-Mobile",
+                openUrl = openUrl,
+            )
+            LinkButton(
+                title = "Issues",
+                url = "https://github.com/ra1nyxin/LaserGRBL-Mobile/issues",
+                openUrl = openUrl,
+            )
+            LinkButton(
+                title = "Pull Requests",
+                url = "https://github.com/ra1nyxin/LaserGRBL-Mobile/pulls",
+                openUrl = openUrl,
+            )
+            LinkButton(
+                title = "Releases / APK",
+                url = "https://github.com/ra1nyxin/LaserGRBL-Mobile/releases",
+                openUrl = openUrl,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LinkButton(
+    title: String,
+    url: String,
+    openUrl: (String) -> Unit,
+) {
+    OutlinedButton(
+        onClick = { openUrl(url) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(title, fontWeight = FontWeight.Bold)
+            Text(
+                url,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
