@@ -58,6 +58,35 @@ class SvgToGcodeConverterTest {
     }
 
     @Test
+    fun flattensArcCommands() {
+        val svg = """<svg><path d="M0 0 A 10 10 0 0 1 20 0"/></svg>"""
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 20.0))
+        val bounds = GcodeParser.estimateBounds(result.lines)
+
+        assertTrue(result.unsupportedCommands.isEmpty())
+        assertTrue(result.segmentCount > 8)
+        assertEquals(0.0, bounds.minX, 0.0001)
+        assertEquals(20.0, bounds.maxX, 0.0001)
+        assertEquals(0.0, bounds.minY, 0.0001)
+        assertEquals(10.0, bounds.maxY, 0.0001)
+    }
+
+    @Test
+    fun supportsRelativeRotatedArcCommands() {
+        val svg = """<svg><path d="M5 5 a 8 4 30 1 0 16 0"/></svg>"""
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 16.0))
+        val bounds = GcodeParser.estimateBounds(result.lines)
+
+        assertTrue(result.unsupportedCommands.isEmpty())
+        assertTrue(result.segmentCount > 8)
+        assertTrue(bounds.hasMotion)
+        assertEquals(0.0, bounds.minX, 0.0001)
+        assertEquals(16.0, bounds.maxX, 0.0001)
+    }
+
+    @Test
     fun convertsBasicShapeElements() {
         val svg = """
             <svg>

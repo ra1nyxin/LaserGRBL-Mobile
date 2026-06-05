@@ -5,12 +5,14 @@ import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.math.tan
 import org.w3c.dom.Element
 import org.w3c.dom.Node
@@ -362,6 +364,19 @@ object SvgToGcodeConverter {
                         previousCommand = 'T'
                     }
                 }
+                'A' -> {
+                    while (remainingNumbers() >= 7) {
+                        val rx = number()
+                        val ry = number()
+                        val xAxisRotation = number()
+                        val largeArc = number().roundToInt() != 0
+                        val sweep = number().roundToInt() != 0
+                        val end = point(number(), number(), current, relative)
+                        addFlattened(flattenArc(current, rx, ry, xAxisRotation, largeArc, sweep, end))
+                        resetControls()
+                        previousCommand = 'A'
+                    }
+                }
                 'Z' -> {
                     if (current != subPathStart) {
                         segments += SvgSegment(
@@ -456,6 +471,88 @@ object SvgToGcodeConverter {
             y = p2.y + (2.0 / 3.0) * (p1.y - p2.y),
         )
         return flattenCubic(p0, cubic1, cubic2, p2)
+    }
+
+    private fun flattenArc(
+        p0: SvgPoint,
+        rxInput: Double,
+        ryInput: Double,
+        xAxisRotation: Double,
+        largeArc: Boolean,
+        sweep: Boolean,
+        p1: SvgPoint,
+    ): List<SvgPoint> {
+        var rx = abs(rxInput)
+        var ry = abs(ryInput)
+        if (p0 == p1) return listOf(p0, p1)
+        if (rx <= 0.000001 || ry <= 0.000001) return listOf(p0, p1)
+
+        val phi = xAxisRotation / 180.0 * PI
+        val cosPhi = cos(phi)
+        val sinPhi = sin(phi)
+        val dx = (p0.x - p1.x) / 2.0
+        val dy = (p0.y - p1.y) / 2.0
+        val x1p = cosPhi * dx + sinPhi * dy
+        val y1p = -sinPhi * dx + cosPhi * dy
+
+        val radiiScale = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry)
+        if (radiiScale > 1.0) {
+            val scale = sqrt(radiiScale)
+            rx *= scale
+            ry *= scale
+        }
+
+        val rx2 = rx * rx
+        val ry2 = ry * ry
+        val x1p2 = x1p * x1p
+        val y1p2 = y1p * y1p
+        val denominator = rx2 * y1p2 + ry2 * x1p2
+        val centerScale = if (denominator <= 0.000001) {
+            0.0
+        } else {
+            val numerator = max(0.0, rx2 * ry2 - rx2 * y1p2 - ry2 * x1p2)
+            val sign = if (largeArc == sweep) -1.0 else 1.0
+            sign * sqrt(numerator / denominator)
+        }
+
+        val cxp = centerScale * rx * y1p / ry
+        val cyp = centerScale * -ry * x1p / rx
+        val center = SvgPoint(
+            x = cosPhi * cxp - sinPhi * cyp + (p0.x + p1.x) / 2.0,
+            y = sinPhi * cxp + cosPhi * cyp + (p0.y + p1.y) / 2.0,
+        )
+
+        val startVector = SvgPoint((x1p - cxp) / rx, (y1p - cyp) / ry)
+        val endVector = SvgPoint((-x1p - cxp) / rx, (-y1p - cyp) / ry)
+        val startAngle = angleBetween(SvgPoint(1.0, 0.0), startVector)
+        var sweepAngle = angleBetween(startVector, endVector)
+        if (!sweep && sweepAngle > 0.0) {
+            sweepAngle -= 2.0 * PI
+        } else if (sweep && sweepAngle < 0.0) {
+            sweepAngle += 2.0 * PI
+        }
+
+        val byAngle = ceil(abs(sweepAngle) / (PI / 18.0)).toInt()
+        val byLength = ceil(abs(sweepAngle) * max(rx, ry) / 3.0).toInt()
+        val steps = max(4, max(byAngle, byLength)).coerceAtMost(180)
+        val points = mutableListOf(p0)
+        for (i in 1..steps) {
+            val theta = startAngle + sweepAngle * i / steps
+            val cosTheta = cos(theta)
+            val sinTheta = sin(theta)
+            points += SvgPoint(
+                x = center.x + cosPhi * rx * cosTheta - sinPhi * ry * sinTheta,
+                y = center.y + sinPhi * rx * cosTheta + cosPhi * ry * sinTheta,
+            )
+        }
+        points[points.lastIndex] = p1
+        return points
+    }
+
+    private fun angleBetween(from: SvgPoint, to: SvgPoint): Double {
+        val cross = from.x * to.y - from.y * to.x
+        val dot = from.x * to.x + from.y * to.y
+        return atan2(cross, dot)
     }
 
     private fun cubicFlatness(p0: SvgPoint, p1: SvgPoint, p2: SvgPoint, p3: SvgPoint): Double {
