@@ -177,6 +177,39 @@ class SvgToGcodeConverterTest {
     }
 
     @Test
+    fun appliesManualLayerOverridesAndSkipsDisabledLayers() {
+        val svg = """
+            <svg>
+                <path d="M0 0 L10 0" stroke="red" fill="none"/>
+                <path d="M20 0 L30 0" stroke="blue" fill="none"/>
+            </svg>
+        """.trimIndent()
+
+        val result = SvgToGcodeConverter.convert(
+            svg,
+            SvgGcodeSettings(
+                widthMm = 30.0,
+                feedRate = 1000,
+                power = 400,
+                layerOverrides = listOf(
+                    SvgLayerOverride(SvgLayerTarget.Red, enabled = false, power = 400, feedRate = 900),
+                    SvgLayerOverride(SvgLayerTarget.Blue, enabled = true, power = 123, feedRate = 456),
+                )
+            )
+        )
+        val bounds = GcodeParser.estimateBounds(result.lines)
+
+        assertEquals(1, result.pathCount)
+        assertEquals(1, result.layerCount)
+        assertEquals(SvgLayerTarget.Blue, result.layers.single().target)
+        assertEquals(123, result.layers.single().power)
+        assertEquals(456, result.layers.single().feedRate)
+        assertTrue(result.lines.any { it.command == "G1 X30.000 Y0.000 S123 F456" })
+        assertEquals(0.0, bounds.minX, 0.0001)
+        assertEquals(30.0, bounds.maxX, 0.0001)
+    }
+
+    @Test
     fun appliesNestedTransformsToShapesAndPaths() {
         val svg = """
             <svg>

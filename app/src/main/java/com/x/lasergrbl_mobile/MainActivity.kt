@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.x.lasergrbl_mobile.app.LaserUiState
+import com.x.lasergrbl_mobile.app.SvgLayerControl
 import com.x.lasergrbl_mobile.app.LaserViewModel
 import com.x.lasergrbl_mobile.app.ThemeMode
 import com.x.lasergrbl_mobile.core.GcodeBounds
@@ -489,8 +490,39 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
                 Checkbox(checked = state.svgColorLayering, onCheckedChange = viewModel::setSvgColorLayering)
                 Text("SVG 按颜色分层")
             }
+            if (state.svgColorLayering) {
+                Text("SVG 图层参数", fontWeight = FontWeight.Bold)
+                state.svgLayerControls.forEach { control ->
+                    SvgLayerControlRow(control, viewModel)
+                }
+            }
             Text("图片会生成 M4 动态功率扫描线；SVG 会把 path、基础图形、贝塞尔曲线、圆弧和 transform 转换为矢量雕刻路径，并可按颜色层自动调整功率和进给。预设只是起点，第一次实测建议降低功率并空跑。")
         }
+    }
+}
+
+@Composable
+private fun SvgLayerControlRow(control: SvgLayerControl, viewModel: LaserViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = control.enabled,
+                onCheckedChange = { viewModel.setSvgLayerEnabled(control.target, it) },
+            )
+            Text("${control.label}    S${control.power}    F${control.feedRate}", fontWeight = FontWeight.Bold)
+        }
+        Slider(
+            value = control.power.toFloat(),
+            onValueChange = { viewModel.setSvgLayerPower(control.target, it.toInt()) },
+            valueRange = 1f..1000f,
+            enabled = control.enabled,
+        )
+        Slider(
+            value = control.feedRate.toFloat(),
+            onValueChange = { viewModel.setSvgLayerFeedRate(control.target, it.toInt()) },
+            valueRange = 100f..6000f,
+            enabled = control.enabled,
+        )
     }
 }
 

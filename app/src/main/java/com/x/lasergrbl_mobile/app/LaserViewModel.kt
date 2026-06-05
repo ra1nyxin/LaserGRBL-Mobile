@@ -24,6 +24,8 @@ import com.x.lasergrbl_mobile.core.Response
 import com.x.lasergrbl_mobile.core.StreamEvent
 import com.x.lasergrbl_mobile.core.StreamProgress
 import com.x.lasergrbl_mobile.core.SvgGcodeSettings
+import com.x.lasergrbl_mobile.core.SvgLayerOverride
+import com.x.lasergrbl_mobile.core.SvgLayerTarget
 import com.x.lasergrbl_mobile.core.SvgToGcodeConverter
 import com.x.lasergrbl_mobile.serial.SerialDeviceInfo
 import com.x.lasergrbl_mobile.serial.SerialState
@@ -76,9 +78,30 @@ data class LaserUiState(
     val imageBidirectional: Boolean = true,
     val imageInvert: Boolean = false,
     val svgColorLayering: Boolean = true,
+    val svgLayerControls: List<SvgLayerControl> = defaultSvgLayerControls(),
     val themeMode: ThemeMode = ThemeMode.System,
     val safetyArmed: Boolean = false,
 )
+
+data class SvgLayerControl(
+    val target: SvgLayerTarget,
+    val enabled: Boolean = true,
+    val power: Int,
+    val feedRate: Int,
+) {
+    val label: String get() = target.label
+}
+
+fun defaultSvgLayerControls(): List<SvgLayerControl> {
+    return listOf(
+        SvgLayerControl(SvgLayerTarget.Default, enabled = true, power = 350, feedRate = 1200),
+        SvgLayerControl(SvgLayerTarget.Red, enabled = true, power = 350, feedRate = 900),
+        SvgLayerControl(SvgLayerTarget.Blue, enabled = true, power = 190, feedRate = 1500),
+        SvgLayerControl(SvgLayerTarget.Green, enabled = true, power = 245, feedRate = 1380),
+        SvgLayerControl(SvgLayerTarget.YellowOrange, enabled = true, power = 160, feedRate = 1620),
+        SvgLayerControl(SvgLayerTarget.Other, enabled = true, power = 250, feedRate = 1200),
+    )
+}
 
 class LaserViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("lasergrbl_mobile", Application.MODE_PRIVATE)
@@ -215,7 +238,7 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
                     result.unsupportedCommands.joinToString("")
                 }
                 val layerSummary = result.layers.joinToString("；") { layer ->
-                    "${layer.label} 路径${layer.pathCount} S${layer.power} F${layer.feedRate}"
+                    "${layer.target.label}/${layer.label} 路径${layer.pathCount} S${layer.power} F${layer.feedRate}"
                 }
                 val note = "已转换 SVG：图层 ${result.layerCount}，路径 ${result.pathCount}，线段 ${result.segmentCount}，跳过命令 $unsupported。$layerSummary"
                 withContext(Dispatchers.Main) {
@@ -423,6 +446,18 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(svgColorLayering = value)
     }
 
+    fun setSvgLayerEnabled(target: SvgLayerTarget, enabled: Boolean) {
+        updateSvgLayerControl(target) { it.copy(enabled = enabled) }
+    }
+
+    fun setSvgLayerPower(target: SvgLayerTarget, power: Int) {
+        updateSvgLayerControl(target) { it.copy(power = power.coerceIn(1, 1000)) }
+    }
+
+    fun setSvgLayerFeedRate(target: SvgLayerTarget, feedRate: Int) {
+        updateSvgLayerControl(target) { it.copy(feedRate = feedRate.coerceIn(10, 20_000)) }
+    }
+
     fun setThemeMode(value: ThemeMode) {
         preferences.edit().putString(KEY_THEME_MODE, value.name).apply()
         _uiState.value = _uiState.value.copy(themeMode = value)
@@ -523,6 +558,22 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
             travelRate = state.imageTravelRate,
             power = state.imageMaxPower,
             colorLayering = state.svgColorLayering,
+            layerOverrides = state.svgLayerControls.map { control ->
+                SvgLayerOverride(
+                    target = control.target,
+                    enabled = control.enabled,
+                    power = control.power,
+                    feedRate = control.feedRate,
+                )
+            },
+        )
+    }
+
+    private fun updateSvgLayerControl(target: SvgLayerTarget, update: (SvgLayerControl) -> SvgLayerControl) {
+        _uiState.value = _uiState.value.copy(
+            svgLayerControls = _uiState.value.svgLayerControls.map { control ->
+                if (control.target == target) update(control) else control
+            }
         )
     }
 
