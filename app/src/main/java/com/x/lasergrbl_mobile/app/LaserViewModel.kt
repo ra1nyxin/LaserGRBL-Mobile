@@ -54,6 +54,7 @@ data class LaserUiState(
     val progress: StreamProgress = StreamProgress(),
     val log: List<String> = listOf("应用已启动，请连接 USB 串口设备。"),
     val manualCommand: String = "",
+    val baudRateInput: String = "115200",
     val jogStep: Double = 1.0,
     val feedRate: Int = 1200,
     val laserPower: Int = 50,
@@ -78,7 +79,10 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<LaserUiState> = _uiState.asStateFlow()
 
     init {
-        _uiState.value = _uiState.value.copy(themeMode = loadThemeMode())
+        _uiState.value = _uiState.value.copy(
+            themeMode = loadThemeMode(),
+            baudRateInput = loadBaudRateInput(),
+        )
         refreshDevices()
         viewModelScope.launch {
             serialController.state.collect { serial ->
@@ -117,8 +121,13 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
             appendLog("没有发现 USB 串口设备，请确认手机支持 OTG 并已连接雕刻机。")
             return
         }
-        appendLog("请求连接：${device.name}")
-        serialController.requestOpen(device.driver)
+        val baudRate = parsedBaudRate()
+        if (baudRate == null) {
+            appendLog("波特率无效，请输入 1200 到 2000000 之间的整数。")
+            return
+        }
+        appendLog("请求连接：${device.name}，波特率 $baudRate")
+        serialController.requestOpen(device.driver, baudRate)
     }
 
     fun disconnect() {
@@ -320,6 +329,12 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(manualCommand = value)
     }
 
+    fun setBaudRateInput(value: String) {
+        val sanitized = value.filter { it.isDigit() }.take(7)
+        preferences.edit().putString(KEY_BAUD_RATE, sanitized.ifBlank { DEFAULT_BAUD_RATE }).apply()
+        _uiState.value = _uiState.value.copy(baudRateInput = sanitized)
+    }
+
     fun sendManualCommand() {
         val command = _uiState.value.manualCommand.trim()
         if (command.isBlank()) return
@@ -400,6 +415,11 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun parsedBaudRate(): Int? {
+        val baudRate = _uiState.value.baudRateInput.toIntOrNull() ?: return null
+        return baudRate.takeIf { it in 1200..2_000_000 }
+    }
+
     private fun decodeScaledBitmap(uri: Uri, maxLongSide: Int): Bitmap {
         val resolver = getApplication<Application>().contentResolver
         val bounds = BitmapFactory.Options().apply {
@@ -473,8 +493,16 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         return ThemeMode.entries.firstOrNull { it.name == raw } ?: ThemeMode.System
     }
 
+    private fun loadBaudRateInput(): String {
+        val raw = preferences.getString(KEY_BAUD_RATE, DEFAULT_BAUD_RATE).orEmpty()
+        val sanitized = raw.filter { it.isDigit() }.take(7)
+        return sanitized.takeIf { it.toIntOrNull() in 1200..2_000_000 } ?: DEFAULT_BAUD_RATE
+    }
+
     private companion object {
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_BAUD_RATE = "baud_rate"
+        const val DEFAULT_BAUD_RATE = "115200"
     }
 }
 

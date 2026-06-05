@@ -12,6 +12,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +61,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.x.lasergrbl_mobile.app.LaserUiState
@@ -212,6 +214,15 @@ private fun ConnectPage(state: LaserUiState, viewModel: LaserViewModel) {
                     }
                 }
             }
+            OutlinedTextField(
+                value = state.baudRateInput,
+                onValueChange = viewModel::setBaudRateInput,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("波特率") },
+                supportingText = { Text("推荐 115200；特殊固件可手动调整") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            )
             if (state.serial.error != null) {
                 Spacer(Modifier.height(8.dp))
                 Text(state.serial.error, color = MaterialTheme.colorScheme.tertiary)
@@ -222,7 +233,8 @@ private fun ConnectPage(state: LaserUiState, viewModel: LaserViewModel) {
             Text("1. 手机需要支持 USB OTG。")
             Text("2. 常见主控使用 CH340、CP2102、FTDI 或 CDC 串口。")
             Text("3. 默认波特率 115200，适配大多数 GRBL 固件。")
-            Text("4. 开始加工前务必戴护目镜并确认急停有效。")
+            Text("4. 如果设备无响应，可以确认固件配置后尝试 9600、57600 或 230400。")
+            Text("5. 开始加工前务必戴护目镜并确认急停有效。")
         }
     }
 }

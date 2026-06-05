@@ -14,7 +14,7 @@ LaserGRBL Mobile 是一个面向 Android 手机的 GRBL / 激光雕刻机上位�
 - 最低系统：Android 10，`minSdk 29`
 - 目标系统：Android 16 / SDK 36，`targetSdk 36`
 - 串口方式：USB OTG + USB Serial
-- 默认波特率：`115200`
+- 默认波特率：`115200`，连接页支持手动输入自定义波特率
 - 当前构建产物：Debug APK
 - 自动发布：push 后 GitHub Actions 自动测试、构建并发布 APK 到 Release 资产
 - 转换功能：支持图片栅格转换、基础 SVG 线段转换为 GRBL 激光 G-code
@@ -31,6 +31,7 @@ LaserGRBL Mobile 是一个面向 Android 手机的 GRBL / 激光雕刻机上位�
   - `115200 baud`
   - `8N1`
   - 无流控
+- 默认推荐 `115200`，如果遇到特殊固件或旧控制板，可以在连接页手动输入其他波特率。
 
 常见可支持设备类型包括：
 
