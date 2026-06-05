@@ -62,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.x.lasergrbl_mobile.app.LaserUiState
@@ -256,22 +257,25 @@ private fun ControlPage(state: LaserUiState, viewModel: LaserViewModel) {
 
         SectionCard("手动移动") {
             Text("步长：${state.jogStep} mm")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(0.1, 1.0, 10.0).forEach { step ->
-                    OutlinedButton(onClick = { viewModel.setJogStep(step) }) { Text("${step}mm") }
+            listOf(
+                listOf(0.01, 0.05, 0.1),
+                listOf(1.0, 10.0, 50.0),
+            ).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    row.forEach { step ->
+                        StepButton(
+                            label = "${fmtStep(step)}mm",
+                            selected = state.jogStep == step,
+                            onClick = { viewModel.setJogStep(step) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = { viewModel.jog('X', -1) }, modifier = Modifier.weight(1f)) { Text("X-") }
-                Button(onClick = { viewModel.jog('Y', 1) }, modifier = Modifier.weight(1f)) { Text("Y+") }
-                Button(onClick = { viewModel.jog('X', 1) }, modifier = Modifier.weight(1f)) { Text("X+") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = { viewModel.jog('Y', -1) }, modifier = Modifier.weight(1f)) { Text("Y-") }
-                Button(onClick = { viewModel.jog('Z', 1) }, modifier = Modifier.weight(1f)) { Text("Z+") }
-                Button(onClick = { viewModel.jog('Z', -1) }, modifier = Modifier.weight(1f)) { Text("Z-") }
-            }
+            AxisJogRow(axis = 'X', negativeLabel = "X-", positiveLabel = "X+", viewModel = viewModel)
+            AxisJogRow(axis = 'Y', negativeLabel = "Y-", positiveLabel = "Y+", viewModel = viewModel)
+            AxisJogRow(axis = 'Z', negativeLabel = "Z-", positiveLabel = "Z+", viewModel = viewModel)
         }
 
         SectionCard("激光与安全") {
@@ -282,6 +286,52 @@ private fun ControlPage(state: LaserUiState, viewModel: LaserViewModel) {
                 OutlinedButton(onClick = viewModel::laserOff, modifier = Modifier.weight(1f)) { Text("关光 M5") }
                 OutlinedButton(onClick = viewModel::reset, modifier = Modifier.weight(1f)) { Text("复位") }
             }
+        }
+    }
+}
+
+@Composable
+private fun StepButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (selected) {
+        Button(onClick = onClick, modifier = modifier) {
+            Text(label, maxLines = 1)
+        }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = modifier) {
+            Text(label, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun AxisJogRow(
+    axis: Char,
+    negativeLabel: String,
+    positiveLabel: String,
+    viewModel: LaserViewModel,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        OutlinedButton(onClick = { viewModel.jog(axis, -1) }, modifier = Modifier.weight(1f)) {
+            Text(negativeLabel, maxLines = 1)
+        }
+        Text(
+            "$axis 轴",
+            modifier = Modifier.weight(0.7f),
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Button(onClick = { viewModel.jog(axis, 1) }, modifier = Modifier.weight(1f)) {
+            Text(positiveLabel, maxLines = 1)
         }
     }
 }
@@ -573,3 +623,7 @@ private fun valueAfter(command: String, axis: Char): Double? {
 }
 
 private fun fmt(value: Double): String = "%.2f".format(value)
+
+private fun fmtStep(value: Double): String {
+    return if (value >= 1.0) "%.0f".format(value) else "%.2f".format(value).trimEnd('0')
+}
