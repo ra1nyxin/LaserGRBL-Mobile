@@ -75,6 +75,7 @@ data class LaserUiState(
     val imageMaterialPreset: ImageMaterialPreset = ImageMaterialPreset.Custom,
     val imageBidirectional: Boolean = true,
     val imageInvert: Boolean = false,
+    val svgColorLayering: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.System,
     val safetyArmed: Boolean = false,
 )
@@ -213,7 +214,10 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     result.unsupportedCommands.joinToString("")
                 }
-                val note = "已转换 SVG：路径 ${result.pathCount}，线段 ${result.segmentCount}，跳过命令 $unsupported"
+                val layerSummary = result.layers.joinToString("；") { layer ->
+                    "${layer.label} 路径${layer.pathCount} S${layer.power} F${layer.feedRate}"
+                }
+                val note = "已转换 SVG：图层 ${result.layerCount}，路径 ${result.pathCount}，线段 ${result.segmentCount}，跳过命令 $unsupported。$layerSummary"
                 withContext(Dispatchers.Main) {
                     _uiState.value = _uiState.value.copy(
                         job = JobFileState(
@@ -415,6 +419,10 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(imageInvert = value)
     }
 
+    fun setSvgColorLayering(value: Boolean) {
+        _uiState.value = _uiState.value.copy(svgColorLayering = value)
+    }
+
     fun setThemeMode(value: ThemeMode) {
         preferences.edit().putString(KEY_THEME_MODE, value.name).apply()
         _uiState.value = _uiState.value.copy(themeMode = value)
@@ -514,6 +522,7 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
             feedRate = state.imageFeedRate,
             travelRate = state.imageTravelRate,
             power = state.imageMaxPower,
+            colorLayering = state.svgColorLayering,
         )
     }
 

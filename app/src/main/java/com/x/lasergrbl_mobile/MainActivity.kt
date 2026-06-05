@@ -58,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -486,7 +485,11 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
                 Checkbox(checked = state.imageInvert, onCheckedChange = viewModel::setImageInvert)
                 Text("反相雕刻")
             }
-            Text("图片会生成 M4 动态功率扫描线；SVG 会把 path、基础图形、贝塞尔曲线和 transform 转换为矢量雕刻路径。预设只是起点，第一次实测建议降低功率并空跑。")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = state.svgColorLayering, onCheckedChange = viewModel::setSvgColorLayering)
+                Text("SVG 按颜色分层")
+            }
+            Text("图片会生成 M4 动态功率扫描线；SVG 会把 path、基础图形、贝塞尔曲线、圆弧和 transform 转换为矢量雕刻路径，并可按颜色层自动调整功率和进给。预设只是起点，第一次实测建议降低功率并空跑。")
         }
     }
 }
@@ -699,6 +702,7 @@ private fun PositionText(label: String, position: MachinePosition?) {
 @Composable
 private fun GcodePreview(lines: List<GcodeLine>, bounds: GcodeBounds) {
     val color = MaterialTheme.colorScheme.primary
+    val guideColor = MaterialTheme.colorScheme.outline
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
@@ -728,7 +732,7 @@ private fun GcodePreview(lines: List<GcodeLine>, bounds: GcodeBounds) {
                 y = cy
             }
         }
-        drawLine(Color.Gray, Offset.Zero, Offset(size.width, 0f))
+        drawLine(guideColor, Offset.Zero, Offset(size.width, 0f))
     }
 }
 

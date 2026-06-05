@@ -111,6 +111,72 @@ class SvgToGcodeConverterTest {
     }
 
     @Test
+    fun groupsSvgPathsByStrokeColorLayer() {
+        val svg = """
+            <svg>
+                <path d="M0 0 L10 0" stroke="red" fill="none"/>
+                <path d="M20 0 L30 0" stroke="blue" fill="none"/>
+            </svg>
+        """.trimIndent()
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 30.0, feedRate = 1000, power = 400))
+        val commands = result.lines.map { it.command }
+
+        assertEquals(2, result.layerCount)
+        assertEquals("#ff0000", result.layers[0].label)
+        assertEquals(400, result.layers[0].power)
+        assertEquals(750, result.layers[0].feedRate)
+        assertEquals("#0000ff", result.layers[1].label)
+        assertEquals(220, result.layers[1].power)
+        assertEquals(1250, result.layers[1].feedRate)
+        assertTrue(commands.any { it == "G1 X10.000 Y0.000 S400 F750" })
+        assertTrue(commands.any { it == "G1 X30.000 Y0.000 S220 F1250" })
+    }
+
+    @Test
+    fun inheritsStyleAndSkipsInvisibleSvgElements() {
+        val svg = """
+            <svg>
+                <g style="stroke:#00ff00; fill:none">
+                    <path d="M0 0 L10 0"/>
+                    <path d="M20 0 L30 0" style="stroke:#ff0000"/>
+                    <path d="M40 0 L50 0" display="none"/>
+                </g>
+            </svg>
+        """.trimIndent()
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 30.0, feedRate = 1000, power = 400))
+
+        assertEquals(2, result.pathCount)
+        assertEquals(2, result.layerCount)
+        assertEquals(listOf("#00ff00", "#ff0000"), result.layers.map { it.label })
+        assertTrue(result.lines.none { it.command.contains("X50.000") })
+    }
+
+    @Test
+    fun canDisableSvgColorLayering() {
+        val svg = """
+            <svg>
+                <path d="M0 0 L10 0" stroke="red" fill="none"/>
+                <path d="M20 0 L30 0" stroke="blue" fill="none"/>
+            </svg>
+        """.trimIndent()
+
+        val result = SvgToGcodeConverter.convert(
+            svg,
+            SvgGcodeSettings(widthMm = 30.0, feedRate = 1000, power = 400, colorLayering = false)
+        )
+
+        assertEquals(1, result.layerCount)
+        assertEquals("single", result.layers.single().label)
+        assertEquals(400, result.layers.single().power)
+        assertEquals(1000, result.layers.single().feedRate)
+        assertTrue(result.lines.all { line ->
+            !line.command.startsWith("G1") || line.command.contains("S400 F1000")
+        })
+    }
+
+    @Test
     fun appliesNestedTransformsToShapesAndPaths() {
         val svg = """
             <svg>
