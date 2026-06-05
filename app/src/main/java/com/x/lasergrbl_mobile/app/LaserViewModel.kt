@@ -30,6 +30,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+enum class ThemeMode {
+    System, Light, Dark
+}
+
 data class JobFileState(
     val fileName: String = "未选择文件",
     val lines: List<GcodeLine> = emptyList(),
@@ -61,10 +65,12 @@ data class LaserUiState(
     val imageThreshold: Int = 18,
     val imageBidirectional: Boolean = true,
     val imageInvert: Boolean = false,
+    val themeMode: ThemeMode = ThemeMode.System,
     val safetyArmed: Boolean = false,
 )
 
 class LaserViewModel(application: Application) : AndroidViewModel(application) {
+    private val preferences = application.getSharedPreferences("lasergrbl_mobile", Application.MODE_PRIVATE)
     private val serialController = UsbSerialController(application, viewModelScope)
     private val streamer = GcodeStreamer(viewModelScope, serialController)
 
@@ -72,6 +78,7 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<LaserUiState> = _uiState.asStateFlow()
 
     init {
+        _uiState.value = _uiState.value.copy(themeMode = loadThemeMode())
         refreshDevices()
         viewModelScope.launch {
             serialController.state.collect { serial ->
@@ -300,6 +307,11 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(imageInvert = value)
     }
 
+    fun setThemeMode(value: ThemeMode) {
+        preferences.edit().putString(KEY_THEME_MODE, value.name).apply()
+        _uiState.value = _uiState.value.copy(themeMode = value)
+    }
+
     fun setSafetyArmed(value: Boolean) {
         _uiState.value = _uiState.value.copy(safetyArmed = value)
     }
@@ -454,6 +466,15 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         serialController.release()
         super.onCleared()
+    }
+
+    private fun loadThemeMode(): ThemeMode {
+        val raw = preferences.getString(KEY_THEME_MODE, ThemeMode.System.name)
+        return ThemeMode.entries.firstOrNull { it.name == raw } ?: ThemeMode.System
+    }
+
+    private companion object {
+        const val KEY_THEME_MODE = "theme_mode"
     }
 }
 

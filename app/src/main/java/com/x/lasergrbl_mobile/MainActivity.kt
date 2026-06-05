@@ -1,8 +1,8 @@
 package com.x.lasergrbl_mobile
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -11,18 +11,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -42,12 +41,12 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -65,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.x.lasergrbl_mobile.app.LaserUiState
 import com.x.lasergrbl_mobile.app.LaserViewModel
+import com.x.lasergrbl_mobile.app.ThemeMode
 import com.x.lasergrbl_mobile.core.GcodeBounds
 import com.x.lasergrbl_mobile.core.GcodeLine
 import com.x.lasergrbl_mobile.core.GcodeParser
@@ -79,8 +79,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         handleIncomingIntent(intent)
         setContent {
-            LaserGRBLMobileTheme {
-                val state by viewModel.uiState.collectAsState()
+            val state by viewModel.uiState.collectAsState()
+            val systemDark = isSystemInDarkTheme()
+            val darkTheme = when (state.themeMode) {
+                ThemeMode.System -> systemDark
+                ThemeMode.Light -> false
+                ThemeMode.Dark -> true
+            }
+            LaserGRBLMobileTheme(darkTheme = darkTheme) {
                 LaserApp(state = state, viewModel = viewModel)
             }
         }
@@ -108,7 +114,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun LaserApp(state: LaserUiState, viewModel: LaserViewModel) {
     var tab by remember { mutableIntStateOf(0) }
-    val titles = listOf("连接", "控制", "文件", "发送", "日志")
+    val titles = listOf("连接", "控制", "文件", "发送", "设置", "日志")
 
     Scaffold(
         topBar = {
@@ -135,7 +141,7 @@ private fun LaserApp(state: LaserUiState, viewModel: LaserViewModel) {
                     }
                     StatusBadge(state)
                 }
-                TabRow(selectedTabIndex = tab) {
+                ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
                     titles.forEachIndexed { index, title ->
                         Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title, maxLines = 1) })
                     }
@@ -153,6 +159,7 @@ private fun LaserApp(state: LaserUiState, viewModel: LaserViewModel) {
                 1 -> ControlPage(state, viewModel)
                 2 -> FilePage(state, viewModel)
                 3 -> SendPage(state, viewModel)
+                4 -> SettingsPage(state, viewModel)
                 else -> LogPage(state)
             }
         }
@@ -403,6 +410,61 @@ private fun SendPage(state: LaserUiState, viewModel: LaserViewModel) {
                 OutlinedButton(onClick = { viewModel.sendRealtime("!") }, modifier = Modifier.weight(1f)) { Text("暂停 !") }
                 OutlinedButton(onClick = { viewModel.sendRealtime("~") }, modifier = Modifier.weight(1f)) { Text("继续 ~") }
                 OutlinedButton(onClick = { viewModel.sendRealtime("?") }, modifier = Modifier.weight(1f)) { Text("状态 ?") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsPage(state: LaserUiState, viewModel: LaserViewModel) {
+    PageColumn {
+        SectionCard("主题") {
+            ThemeOption(
+                title = "系统",
+                description = "跟随手机系统深色或浅色主题",
+                selected = state.themeMode == ThemeMode.System,
+                onClick = { viewModel.setThemeMode(ThemeMode.System) },
+            )
+            ThemeOption(
+                title = "浅色",
+                description = "固定使用浅色主题",
+                selected = state.themeMode == ThemeMode.Light,
+                onClick = { viewModel.setThemeMode(ThemeMode.Light) },
+            )
+            ThemeOption(
+                title = "深色",
+                description = "固定使用深色主题",
+                selected = state.themeMode == ThemeMode.Dark,
+                onClick = { viewModel.setThemeMode(ThemeMode.Dark) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThemeOption(
+    title: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = selected, onClick = onClick)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
     }
