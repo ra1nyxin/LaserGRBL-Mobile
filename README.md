@@ -256,6 +256,10 @@ M5
 
 关于页提供仓库、Issues、Pull Requests 和 Releases / APK 页面入口，方便用户反馈问题和下载构建产物。
 
+## 开源协议
+
+本项目基于 Apache License 2.0 开源，详见 [LICENSE](LICENSE)。
+
 ## 安全提示
 
 激光雕刻机有现实风险，不要把它当成普通串口玩具。

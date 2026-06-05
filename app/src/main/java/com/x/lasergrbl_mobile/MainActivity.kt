@@ -590,6 +590,11 @@ private fun AboutPage(openUrl: (String) -> Unit) {
                 url = "https://github.com/ra1nyxin/LaserGRBL-Mobile/releases",
                 openUrl = openUrl,
             )
+            LinkButton(
+                title = "开源协议 Apache-2.0",
+                url = "https://github.com/ra1nyxin/LaserGRBL-Mobile/blob/master/LICENSE",
+                openUrl = openUrl,
+            )
         }
     }
 }
