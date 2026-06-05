@@ -1,7 +1,20 @@
 package com.x.lasergrbl_mobile.core
 
+import java.io.StringReader
+import java.util.Locale
+import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.tan
+import org.w3c.dom.Element
+import org.w3c.dom.Node
+import org.xml.sax.InputSource
 
 data class SvgGcodeSettings(
     val widthMm: Double = 30.0,
@@ -25,19 +38,20 @@ data class SvgGcodeResult(
 )
 
 object SvgToGcodeConverter {
-    private val pathRegex = Regex("""<path\b[^>]*\bd\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    private const val CurveFlatness = 0.6
+    private const val MaxCurveDepth = 10
+    private val transformRegex = Regex("""([a-zA-Z]+)\s*\(([^)]*)\)""")
+    private val numberRegex = Regex("""[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?""")
 
     fun convert(svg: String, settings: SvgGcodeSettings = SvgGcodeSettings()): SvgGcodeResult {
-        val parsedPaths = pathRegex.findAll(svg)
-            .mapNotNull { parsePath(it.groupValues[1]) }
-            .toList()
+        val parsedPaths = parseSvg(svg)
         if (parsedPaths.isEmpty()) {
-            error("未找到可转换的 SVG path")
+            error("未找到可转换的 SVG 图形")
         }
 
         val allPoints = parsedPaths.flatMap { it.segments.flatMap { segment -> listOf(segment.start, segment.end) } }
         if (allPoints.isEmpty()) {
-            error("SVG path 中没有可转换的线段")
+            error("SVG 图形中没有可转换的线段")
         }
         val minX = allPoints.minOf { it.x }
         val maxX = allPoints.maxOf { it.x }
@@ -54,8 +68,8 @@ object SvgToGcodeConverter {
 
         parsedPaths.forEach { path ->
             path.segments.forEachIndexed { index, segment ->
-                val start = segment.start.toMachine(minX, minY, maxY, scale)
-                val end = segment.end.toMachine(minX, minY, maxY, scale)
+                val start = segment.start.toMachine(minX, maxY, scale)
+                val end = segment.end.toMachine(minX, maxY, scale)
                 if (index == 0 || !segment.continuesFromPrevious) {
                     output += "M5"
                     output += "G0 X${fmt(start.x)} Y${fmt(start.y)} F${settings.travelRate}"
@@ -84,22 +98,178 @@ object SvgToGcodeConverter {
         )
     }
 
-    private fun parsePath(data: String): ParsedPath? {
+    private fun parseSvg(svg: String): List<ParsedPath> {
+        val factory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = false
+            isIgnoringComments = true
+            setFeatureSafely("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeatureSafely("http://xml.org/sax/features/external-general-entities", false)
+            setFeatureSafely("http://xml.org/sax/features/external-parameter-entities", false)
+            setFeatureSafely("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+        }
+        val document = factory
+            .newDocumentBuilder()
+            .parse(InputSource(StringReader(svg)))
+
+        return collectElements(document.documentElement, SvgMatrix.Identity)
+    }
+
+    private fun DocumentBuilderFactory.setFeatureSafely(feature: String, enabled: Boolean) {
+        try {
+            setFeature(feature, enabled)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun collectElements(element: Element, parentTransform: SvgMatrix): List<ParsedPath> {
+        val transform = parentTransform.multiply(parseTransform(element.attr("transform")))
+        val tag = element.tagName.substringAfter(':').lowercase(Locale.US)
+        val current = when (tag) {
+            "path" -> element.attr("d").takeIf { it.isNotBlank() }?.let { parsePath(it, transform) }
+            "rect" -> parseRect(element, transform)
+            "circle" -> parseCircle(element, transform)
+            "ellipse" -> parseEllipse(element, transform)
+            "polyline" -> parsePolyPoints(element, close = false, transform)
+            "polygon" -> parsePolyPoints(element, close = true, transform)
+            else -> null
+        }
+
+        val results = mutableListOf<ParsedPath>()
+        current?.takeIf { it.segments.isNotEmpty() || it.unsupportedCommands.isNotEmpty() }?.let { results += it }
+
+        val children = element.childNodes
+        for (i in 0 until children.length) {
+            val child = children.item(i)
+            if (child.nodeType == Node.ELEMENT_NODE) {
+                results += collectElements(child as Element, transform)
+            }
+        }
+        return results
+    }
+
+    private fun parseRect(element: Element, transform: SvgMatrix): ParsedPath? {
+        val x = element.doubleAttr("x") ?: 0.0
+        val y = element.doubleAttr("y") ?: 0.0
+        val width = element.doubleAttr("width") ?: return null
+        val height = element.doubleAttr("height") ?: return null
+        if (width <= 0.0 || height <= 0.0) return null
+
+        return pointsToPath(
+            listOf(
+                SvgPoint(x, y),
+                SvgPoint(x + width, y),
+                SvgPoint(x + width, y + height),
+                SvgPoint(x, y + height),
+            ),
+            close = true,
+            transform = transform,
+        )
+    }
+
+    private fun parseCircle(element: Element, transform: SvgMatrix): ParsedPath? {
+        val cx = element.doubleAttr("cx") ?: 0.0
+        val cy = element.doubleAttr("cy") ?: 0.0
+        val r = element.doubleAttr("r") ?: return null
+        if (r <= 0.0) return null
+        return ovalToPath(cx, cy, r, r, transform)
+    }
+
+    private fun parseEllipse(element: Element, transform: SvgMatrix): ParsedPath? {
+        val cx = element.doubleAttr("cx") ?: 0.0
+        val cy = element.doubleAttr("cy") ?: 0.0
+        val rx = element.doubleAttr("rx") ?: return null
+        val ry = element.doubleAttr("ry") ?: return null
+        if (rx <= 0.0 || ry <= 0.0) return null
+        return ovalToPath(cx, cy, rx, ry, transform)
+    }
+
+    private fun ovalToPath(cx: Double, cy: Double, rx: Double, ry: Double, transform: SvgMatrix): ParsedPath {
+        val radius = max(rx, ry)
+        val steps = ceil(2.0 * PI * radius / 3.0).toInt().coerceIn(24, 144)
+        val points = (0 until steps).map { index ->
+            val angle = 2.0 * PI * index / steps
+            SvgPoint(cx + cos(angle) * rx, cy + sin(angle) * ry)
+        }
+        return pointsToPath(points, close = true, transform = transform) ?: ParsedPath(emptyList(), emptySet())
+    }
+
+    private fun parsePolyPoints(element: Element, close: Boolean, transform: SvgMatrix): ParsedPath? {
+        val points = numberRegex.findAll(element.attr("points"))
+            .mapNotNull { it.value.toDoubleOrNull() }
+            .chunked(2)
+            .filter { it.size == 2 }
+            .map { SvgPoint(it[0], it[1]) }
+            .toList()
+        return pointsToPath(points, close, transform)
+    }
+
+    private fun pointsToPath(points: List<SvgPoint>, close: Boolean, transform: SvgMatrix): ParsedPath? {
+        if (points.size < 2) return null
+        val transformed = points.map(transform::map)
+        val segments = mutableListOf<SvgSegment>()
+        for (i in 0 until transformed.lastIndex) {
+            segments += SvgSegment(transformed[i], transformed[i + 1], continuesFromPrevious = i > 0)
+        }
+        if (close && transformed.size > 2 && transformed.last() != transformed.first()) {
+            segments += SvgSegment(transformed.last(), transformed.first(), continuesFromPrevious = true)
+        }
+        return ParsedPath(segments, emptySet())
+    }
+
+    private fun parsePath(data: String, transform: SvgMatrix = SvgMatrix.Identity): ParsedPath? {
         val tokens = tokenizePath(data)
         var index = 0
         var command: Char? = null
         var current = SvgPoint(0.0, 0.0)
         var subPathStart = current
         var startsNewSubPath = true
+        var previousCommand: Char? = null
+        var lastCubicControl: SvgPoint? = null
+        var lastQuadraticControl: SvgPoint? = null
         val segments = mutableListOf<SvgSegment>()
         val unsupported = mutableSetOf<Char>()
 
         fun hasNumber(): Boolean = index < tokens.size && tokens[index].toDoubleOrNull() != null
+        fun remainingNumbers(): Int {
+            var count = 0
+            var cursor = index
+            while (cursor < tokens.size && tokens[cursor].toDoubleOrNull() != null) {
+                count += 1
+                cursor += 1
+            }
+            return count
+        }
         fun number(): Double = tokens[index++].toDouble()
         fun nextCommandOrNull(): Char? {
             if (index >= tokens.size) return null
             val token = tokens[index]
             return if (token.length == 1 && token[0].isLetter()) token[0] else null
+        }
+        fun resetControls() {
+            lastCubicControl = null
+            lastQuadraticControl = null
+        }
+        fun addLine(next: SvgPoint) {
+            segments += SvgSegment(
+                start = transform.map(current),
+                end = transform.map(next),
+                continuesFromPrevious = !startsNewSubPath,
+            )
+            current = next
+            startsNewSubPath = false
+            resetControls()
+        }
+        fun addFlattened(points: List<SvgPoint>) {
+            if (points.size < 2) return
+            for (i in 0 until points.lastIndex) {
+                segments += SvgSegment(
+                    start = transform.map(points[i]),
+                    end = transform.map(points[i + 1]),
+                    continuesFromPrevious = if (i == 0) !startsNewSubPath else true,
+                )
+            }
+            current = points.last()
+            startsNewSubPath = false
         }
 
         while (index < tokens.size) {
@@ -111,57 +281,108 @@ object SvgToGcodeConverter {
             val relative = cmd.isLowerCase()
             when (cmd.uppercaseChar()) {
                 'M' -> {
-                    if (!hasNumber()) break
+                    if (remainingNumbers() < 2) break
                     val first = point(number(), number(), current, relative)
                     current = first
                     subPathStart = first
                     startsNewSubPath = true
-                    while (hasNumber()) {
-                        val next = point(number(), number(), current, relative)
-                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
-                        current = next
-                        startsNewSubPath = false
+                    resetControls()
+                    while (remainingNumbers() >= 2) {
+                        addLine(point(number(), number(), current, relative))
                     }
+                    previousCommand = 'M'
                 }
                 'L' -> {
-                    while (hasNumber()) {
-                        val next = point(number(), number(), current, relative)
-                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
-                        current = next
-                        startsNewSubPath = false
+                    while (remainingNumbers() >= 2) {
+                        addLine(point(number(), number(), current, relative))
                     }
+                    previousCommand = 'L'
                 }
                 'H' -> {
                     while (hasNumber()) {
                         val x = number()
-                        val next = current.copy(x = if (relative) current.x + x else x)
-                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
-                        current = next
-                        startsNewSubPath = false
+                        addLine(current.copy(x = if (relative) current.x + x else x))
                     }
+                    previousCommand = 'H'
                 }
                 'V' -> {
                     while (hasNumber()) {
                         val y = number()
-                        val next = current.copy(y = if (relative) current.y + y else y)
-                        segments += SvgSegment(current, next, continuesFromPrevious = !startsNewSubPath)
-                        current = next
-                        startsNewSubPath = false
+                        addLine(current.copy(y = if (relative) current.y + y else y))
+                    }
+                    previousCommand = 'V'
+                }
+                'C' -> {
+                    while (remainingNumbers() >= 6) {
+                        val control1 = point(number(), number(), current, relative)
+                        val control2 = point(number(), number(), current, relative)
+                        val end = point(number(), number(), current, relative)
+                        addFlattened(flattenCubic(current, control1, control2, end))
+                        lastCubicControl = control2
+                        lastQuadraticControl = null
+                        previousCommand = 'C'
+                    }
+                }
+                'S' -> {
+                    while (remainingNumbers() >= 4) {
+                        val control1 = if (previousCommand == 'C' || previousCommand == 'S') {
+                            lastCubicControl?.reflectAround(current) ?: current
+                        } else {
+                            current
+                        }
+                        val control2 = point(number(), number(), current, relative)
+                        val end = point(number(), number(), current, relative)
+                        addFlattened(flattenCubic(current, control1, control2, end))
+                        lastCubicControl = control2
+                        lastQuadraticControl = null
+                        previousCommand = 'S'
+                    }
+                }
+                'Q' -> {
+                    while (remainingNumbers() >= 4) {
+                        val control = point(number(), number(), current, relative)
+                        val end = point(number(), number(), current, relative)
+                        addFlattened(flattenQuadratic(current, control, end))
+                        lastQuadraticControl = control
+                        lastCubicControl = null
+                        previousCommand = 'Q'
+                    }
+                }
+                'T' -> {
+                    while (remainingNumbers() >= 2) {
+                        val control = if (previousCommand == 'Q' || previousCommand == 'T') {
+                            lastQuadraticControl?.reflectAround(current) ?: current
+                        } else {
+                            current
+                        }
+                        val end = point(number(), number(), current, relative)
+                        addFlattened(flattenQuadratic(current, control, end))
+                        lastQuadraticControl = control
+                        lastCubicControl = null
+                        previousCommand = 'T'
                     }
                 }
                 'Z' -> {
                     if (current != subPathStart) {
-                        segments += SvgSegment(current, subPathStart, continuesFromPrevious = true)
+                        segments += SvgSegment(
+                            start = transform.map(current),
+                            end = transform.map(subPathStart),
+                            continuesFromPrevious = true,
+                        )
                         current = subPathStart
                     }
                     startsNewSubPath = true
                     command = null
+                    resetControls()
+                    previousCommand = 'Z'
                 }
                 else -> {
                     unsupported += cmd.uppercaseChar()
                     while (index < tokens.size && nextCommandOrNull() == null) {
                         index += 1
                     }
+                    resetControls()
+                    previousCommand = cmd.uppercaseChar()
                 }
             }
         }
@@ -197,23 +418,123 @@ object SvgToGcodeConverter {
         return tokens
     }
 
+    private fun flattenCubic(p0: SvgPoint, p1: SvgPoint, p2: SvgPoint, p3: SvgPoint): List<SvgPoint> {
+        val out = mutableListOf(p0)
+        flattenCubicInto(p0, p1, p2, p3, depth = 0, out)
+        return out
+    }
+
+    private fun flattenCubicInto(
+        p0: SvgPoint,
+        p1: SvgPoint,
+        p2: SvgPoint,
+        p3: SvgPoint,
+        depth: Int,
+        out: MutableList<SvgPoint>,
+    ) {
+        if (depth >= MaxCurveDepth || cubicFlatness(p0, p1, p2, p3) <= CurveFlatness) {
+            out += p3
+            return
+        }
+        val p01 = p0.mid(p1)
+        val p12 = p1.mid(p2)
+        val p23 = p2.mid(p3)
+        val p012 = p01.mid(p12)
+        val p123 = p12.mid(p23)
+        val p0123 = p012.mid(p123)
+        flattenCubicInto(p0, p01, p012, p0123, depth + 1, out)
+        flattenCubicInto(p0123, p123, p23, p3, depth + 1, out)
+    }
+
+    private fun flattenQuadratic(p0: SvgPoint, p1: SvgPoint, p2: SvgPoint): List<SvgPoint> {
+        val cubic1 = SvgPoint(
+            x = p0.x + (2.0 / 3.0) * (p1.x - p0.x),
+            y = p0.y + (2.0 / 3.0) * (p1.y - p0.y),
+        )
+        val cubic2 = SvgPoint(
+            x = p2.x + (2.0 / 3.0) * (p1.x - p2.x),
+            y = p2.y + (2.0 / 3.0) * (p1.y - p2.y),
+        )
+        return flattenCubic(p0, cubic1, cubic2, p2)
+    }
+
+    private fun cubicFlatness(p0: SvgPoint, p1: SvgPoint, p2: SvgPoint, p3: SvgPoint): Double {
+        return max(distanceToLine(p1, p0, p3), distanceToLine(p2, p0, p3))
+    }
+
+    private fun distanceToLine(point: SvgPoint, start: SvgPoint, end: SvgPoint): Double {
+        val dx = end.x - start.x
+        val dy = end.y - start.y
+        val length = hypot(dx, dy)
+        if (length <= 0.000001) return hypot(point.x - start.x, point.y - start.y)
+        return abs(dy * point.x - dx * point.y + end.x * start.y - end.y * start.x) / length
+    }
+
+    private fun parseTransform(value: String): SvgMatrix {
+        if (value.isBlank()) return SvgMatrix.Identity
+        var matrix = SvgMatrix.Identity
+        transformRegex.findAll(value).forEach { match ->
+            val name = match.groupValues[1].lowercase(Locale.US)
+            val args = parseNumberList(match.groupValues[2])
+            val next = when (name) {
+                "matrix" -> if (args.size >= 6) SvgMatrix(args[0], args[1], args[2], args[3], args[4], args[5]) else null
+                "translate" -> if (args.isNotEmpty()) SvgMatrix.translation(args[0], args.getOrElse(1) { 0.0 }) else null
+                "scale" -> if (args.isNotEmpty()) SvgMatrix.scale(args[0], args.getOrElse(1) { args[0] }) else null
+                "rotate" -> when {
+                    args.size >= 3 -> {
+                        val rotate = SvgMatrix.rotation(args[0])
+                        SvgMatrix.translation(args[1], args[2])
+                            .multiply(rotate)
+                            .multiply(SvgMatrix.translation(-args[1], -args[2]))
+                    }
+                    args.isNotEmpty() -> SvgMatrix.rotation(args[0])
+                    else -> null
+                }
+                "skewx" -> if (args.isNotEmpty()) SvgMatrix.skewX(args[0]) else null
+                "skewy" -> if (args.isNotEmpty()) SvgMatrix.skewY(args[0]) else null
+                else -> null
+            }
+            if (next != null) {
+                matrix = matrix.multiply(next)
+            }
+        }
+        return matrix
+    }
+
+    private fun parseNumberList(value: String): List<Double> {
+        return numberRegex.findAll(value).mapNotNull { it.value.toDoubleOrNull() }.toList()
+    }
+
     private fun point(x: Double, y: Double, current: SvgPoint, relative: Boolean): SvgPoint {
         return if (relative) SvgPoint(current.x + x, current.y + y) else SvgPoint(x, y)
     }
 
-    private fun SvgPoint.toMachine(minX: Double, minY: Double, maxY: Double, scale: Double): SvgPoint {
+    private fun SvgPoint.toMachine(minX: Double, maxY: Double, scale: Double): SvgPoint {
         return SvgPoint(
             x = (x - minX) * scale,
             y = (maxY - y) * scale,
         )
     }
 
-    private fun fmt(value: Double): String = "%.3f".format(value.roundTo(0.001))
+    private fun Element.attr(name: String): String = getAttribute(name).orEmpty()
+
+    private fun Element.doubleAttr(name: String): Double? {
+        return numberRegex.find(attr(name)).takeIf { it != null }?.value?.toDoubleOrNull()
+    }
+
+    private fun fmt(value: Double): String = String.format(Locale.US, "%.3f", value.roundTo(0.001))
 
     private fun Double.roundTo(step: Double): Double = (this / step).roundToInt() * step
 }
 
-private data class SvgPoint(val x: Double, val y: Double)
+private data class SvgPoint(val x: Double, val y: Double) {
+    fun mid(other: SvgPoint): SvgPoint = SvgPoint((x + other.x) / 2.0, (y + other.y) / 2.0)
+
+    fun reflectAround(center: SvgPoint): SvgPoint = SvgPoint(
+        x = center.x * 2.0 - x,
+        y = center.y * 2.0 - y,
+    )
+}
 
 private data class SvgSegment(
     val start: SvgPoint,
@@ -225,3 +546,49 @@ private data class ParsedPath(
     val segments: List<SvgSegment>,
     val unsupportedCommands: Set<Char>,
 )
+
+private data class SvgMatrix(
+    val a: Double,
+    val b: Double,
+    val c: Double,
+    val d: Double,
+    val e: Double,
+    val f: Double,
+) {
+    fun map(point: SvgPoint): SvgPoint {
+        return SvgPoint(
+            x = a * point.x + c * point.y + e,
+            y = b * point.x + d * point.y + f,
+        )
+    }
+
+    fun multiply(other: SvgMatrix): SvgMatrix {
+        return SvgMatrix(
+            a = a * other.a + c * other.b,
+            b = b * other.a + d * other.b,
+            c = a * other.c + c * other.d,
+            d = b * other.c + d * other.d,
+            e = a * other.e + c * other.f + e,
+            f = b * other.e + d * other.f + f,
+        )
+    }
+
+    companion object {
+        val Identity = SvgMatrix(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+        fun translation(x: Double, y: Double): SvgMatrix = SvgMatrix(1.0, 0.0, 0.0, 1.0, x, y)
+
+        fun scale(x: Double, y: Double): SvgMatrix = SvgMatrix(x, 0.0, 0.0, y, 0.0, 0.0)
+
+        fun rotation(degrees: Double): SvgMatrix {
+            val radians = degrees / 180.0 * PI
+            val cos = cos(radians)
+            val sin = sin(radians)
+            return SvgMatrix(cos, sin, -sin, cos, 0.0, 0.0)
+        }
+
+        fun skewX(degrees: Double): SvgMatrix = SvgMatrix(1.0, 0.0, tan(degrees / 180.0 * PI), 1.0, 0.0, 0.0)
+
+        fun skewY(degrees: Double): SvgMatrix = SvgMatrix(1.0, tan(degrees / 180.0 * PI), 0.0, 1.0, 0.0, 0.0)
+    }
+}

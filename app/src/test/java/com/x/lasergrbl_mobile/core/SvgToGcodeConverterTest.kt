@@ -36,14 +36,70 @@ class SvgToGcodeConverterTest {
     }
 
     @Test
-    fun reportsUnsupportedCurveCommandsButKeepsSupportedSegments() {
+    fun flattensCubicCurveCommands() {
         val svg = """<svg><path d="M0 0 L10 0 C 10 10 20 10 20 0"/></svg>"""
 
         val result = SvgToGcodeConverter.convert(svg)
 
-        assertEquals(setOf('C'), result.unsupportedCommands)
-        assertEquals(1, result.segmentCount)
-        assertTrue(result.lines.any { it.command.startsWith("G1") })
+        assertTrue(result.unsupportedCommands.isEmpty())
+        assertTrue(result.segmentCount > 2)
+        assertTrue(result.lines.any { it.command.startsWith("G1 X30.000") })
+    }
+
+    @Test
+    fun flattensQuadraticAndSmoothCurveCommands() {
+        val svg = """<svg><path d="M0 0 Q 5 10 10 0 T 20 0"/></svg>"""
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 20.0))
+
+        assertTrue(result.unsupportedCommands.isEmpty())
+        assertTrue(result.segmentCount > 4)
+        assertTrue(result.lines.any { it.command.startsWith("G1 X20.000") })
+    }
+
+    @Test
+    fun convertsBasicShapeElements() {
+        val svg = """
+            <svg>
+                <rect x="0" y="0" width="10" height="5"/>
+                <circle cx="20" cy="5" r="2"/>
+                <ellipse cx="30" cy="5" rx="3" ry="1"/>
+                <polyline points="40,0 45,5 50,0"/>
+                <polygon points="60,0 65,5 70,0"/>
+            </svg>
+        """.trimIndent()
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 70.0))
+
+        assertEquals(5, result.pathCount)
+        assertTrue(result.segmentCount > 30)
+        assertTrue(result.unsupportedCommands.isEmpty())
+        val bounds = GcodeParser.estimateBounds(result.lines)
+        assertEquals(0.0, bounds.minX, 0.0001)
+        assertEquals(70.0, bounds.maxX, 0.0001)
+        assertEquals(0.0, bounds.minY, 0.0001)
+        assertEquals(7.0, bounds.maxY, 0.0001)
+    }
+
+    @Test
+    fun appliesNestedTransformsToShapesAndPaths() {
+        val svg = """
+            <svg>
+                <g transform="translate(10, 5)">
+                    <path d="M0 0 L10 0" transform="scale(2)"/>
+                    <rect x="0" y="10" width="5" height="5"/>
+                </g>
+            </svg>
+        """.trimIndent()
+
+        val result = SvgToGcodeConverter.convert(svg, SvgGcodeSettings(widthMm = 20.0))
+        val bounds = GcodeParser.estimateBounds(result.lines)
+
+        assertEquals(2, result.pathCount)
+        assertEquals(0.0, bounds.minX, 0.0001)
+        assertEquals(20.0, bounds.maxX, 0.0001)
+        assertEquals(0.0, bounds.minY, 0.0001)
+        assertEquals(15.0, bounds.maxY, 0.0001)
     }
 
     @Test

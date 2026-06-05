@@ -17,7 +17,7 @@ LaserGRBL Mobile 是一个面向 Android 手机的 GRBL / 激光雕刻机上位�
 - 默认波特率：`115200`，连接页支持手动输入自定义波特率
 - 当前构建产物：Debug APK
 - 自动发布：push 后 GitHub Actions 自动测试、构建并发布 APK 到 Release 资产
-- 转换功能：支持图片栅格转换、基础 SVG 线段转换为 GRBL 激光 G-code
+- 转换功能：支持图片栅格转换、SVG path / 基础图形 / 贝塞尔曲线展平后转换为 GRBL 激光 G-code
 
 ## 主要功能
 
@@ -180,14 +180,19 @@ M5
 
 读取 SVG 后会：
 
-- 提取 `<path d="...">`
+- 解析 SVG XML 节点，而不是只用字符串提取 path
+- 支持 `<path d="...">`
 - 支持 `M`、`L`、`H`、`V`、`Z` 基础线段命令
+- 支持 `C`、`S`、`Q`、`T` 贝塞尔曲线命令，并自动展平为可雕刻线段
+- 支持 `<rect>`、`<circle>`、`<ellipse>`、`<polyline>`、`<polygon>` 基础图形
+- 支持常见 `transform`：`matrix`、`translate`、`scale`、`rotate`、`skewX`、`skewY`
+- 支持 `<g>` 分组和子节点继承 transform
 - 支持相对坐标和绝对坐标
 - 按设定宽度缩放到实际加工尺寸
 - 生成 `G0` 空程、`M4 S...` 开光、`G1` 线段雕刻、`M5` 关光
-- 记录跳过的暂不支持命令，例如 `C`、`Q`、`A`
+- 记录跳过的暂不支持命令，例如 SVG path 圆弧 `A`
 
-SVG 转换适合简单 logo、线稿、外框和已经转成直线段的矢量图。当前不会把贝塞尔曲线自动展平为线段；复杂 SVG 建议先在矢量软件中转为折线或导出为 G-code。
+SVG 转换适合简单 logo、线稿、外框和常见矢量图形。贝塞尔曲线会按平坦度递归拆成多段 `G1`，圆形和椭圆会近似为多边形路径。复杂 SVG 仍建议先在矢量软件里检查尺寸、删除隐藏对象，并用边界预跑确认实际范围。
 
 ### 轨迹预览
 
@@ -370,6 +375,9 @@ LaserGRBL-Mobile-debug-{commit-sha}.apk
 - 图片功率映射、阈值跳过和双向扫描
 - SVG path 线段转 G-code
 - SVG 相对坐标、水平线、垂直线和闭合路径解析
+- SVG 贝塞尔曲线展平
+- SVG rect / circle / ellipse / polyline / polygon 基础图形解析
+- SVG 嵌套 transform 解析
 - GRBL 状态解析
 - `ok/error/ALARM` 响应分类
 - 基础单行流式发送逻辑
@@ -387,7 +395,7 @@ LaserGRBL-Mobile-debug-{commit-sha}.apk
 - 当前 G-code 流式发送是保守的一行一确认策略。
 - 当前轨迹预览只覆盖基础 `G0/G1`，不完整模拟圆弧和雕刻效果。
 - 已支持基础图片栅格转 G-code。
-- SVG 转换当前只支持基础线段 path，不支持自动展平贝塞尔曲线、圆弧和复杂 transform。
+- SVG 转换已支持常见 path、基础图形、贝塞尔曲线展平和常见 transform，但暂不支持 path 圆弧 `A` 的真实圆弧转换，也不会处理 CSS 样式、颜色分层、填充区域扫描和布尔运算。
 - 已内置一组图片转换材料预设，但仍需要按机器和材料实测微调。
 - 已支持加工前边界框预跑，但不能替代完整仿真。
 
@@ -398,7 +406,7 @@ LaserGRBL-Mobile-debug-{commit-sha}.apk
 1. 实机验证 USB 串口连接、状态查询、Jog、暂停/继续。
 2. 增加 character-counting streaming，提高发送效率。
 3. 增加更多材料预设和参数说明。
-4. 增加 SVG 曲线自动展平和 transform 支持。
+4. 增加 SVG path 圆弧 `A`、颜色分层和填充区域扫描。
 5. 增加蓝牙 / Wi-Fi 串口桥支持。
 6. 增加任务历史和最近文件。
 

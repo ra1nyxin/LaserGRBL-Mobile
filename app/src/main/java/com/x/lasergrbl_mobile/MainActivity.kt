@@ -486,7 +486,7 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
                 Checkbox(checked = state.imageInvert, onCheckedChange = viewModel::setImageInvert)
                 Text("反相雕刻")
             }
-            Text("图片会生成 M4 动态功率扫描线；SVG 会把 M/L/H/V/Z 线段转换为矢量雕刻路径。预设只是起点，第一次实测建议降低功率并空跑。")
+            Text("图片会生成 M4 动态功率扫描线；SVG 会把 path、基础图形、贝塞尔曲线和 transform 转换为矢量雕刻路径。预设只是起点，第一次实测建议降低功率并空跑。")
         }
     }
 }
