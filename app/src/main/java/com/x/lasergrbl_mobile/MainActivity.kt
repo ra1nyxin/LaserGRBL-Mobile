@@ -59,7 +59,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -71,6 +70,9 @@ import com.x.lasergrbl_mobile.app.ThemeMode
 import com.x.lasergrbl_mobile.core.GcodeBounds
 import com.x.lasergrbl_mobile.core.GcodeLine
 import com.x.lasergrbl_mobile.core.GcodeParser
+import com.x.lasergrbl_mobile.core.ImageDitherMode
+import com.x.lasergrbl_mobile.core.ImageMaterialPreset
+import com.x.lasergrbl_mobile.core.ImageScanDirection
 import com.x.lasergrbl_mobile.core.MachinePosition
 import com.x.lasergrbl_mobile.ui.theme.LaserGRBLMobileTheme
 
@@ -382,16 +384,9 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
                     onClick = { svgLauncher.launch(arrayOf("image/svg+xml", "text/xml", "text/*", "*/*")) },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("选择 SVG 转换")
-                }
-                OutlinedButton(
-                    onClick = { },
-                    enabled = false,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("材料预设待加入")
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -410,6 +405,22 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
         }
 
         SectionCard("转换参数") {
+            Text("材料预设：${state.imageMaterialPreset.label}")
+            listOf(
+                listOf(ImageMaterialPreset.Custom, ImageMaterialPreset.Basswood, ImageMaterialPreset.Cardboard),
+                listOf(ImageMaterialPreset.Leather, ImageMaterialPreset.AnodizedAluminum),
+            ).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    row.forEach { preset ->
+                        StepButton(
+                            label = preset.label,
+                            selected = state.imageMaterialPreset == preset,
+                            onClick = { viewModel.setImageMaterialPreset(preset) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
             Text("宽度：${fmt(state.imageWidthMm)} mm")
             Slider(
                 value = state.imageWidthMm.toFloat(),
@@ -439,6 +450,34 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
                 onValueChange = { viewModel.setImageThreshold(it.toInt()) },
                 valueRange = 0f..255f,
             )
+            Text("Gamma：${fmt(state.imageGamma)}")
+            Slider(
+                value = state.imageGamma.toFloat(),
+                onValueChange = { viewModel.setImageGamma(it.toDouble()) },
+                valueRange = 0.3f..3.0f,
+            )
+            Text("抖动：${ditherLabel(state.imageDitherMode)}")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf(ImageDitherMode.None, ImageDitherMode.Ordered, ImageDitherMode.FloydSteinberg).forEach { mode ->
+                    StepButton(
+                        label = ditherLabel(mode),
+                        selected = state.imageDitherMode == mode,
+                        onClick = { viewModel.setImageDitherMode(mode) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            Text("扫描方向：${scanDirectionLabel(state.imageScanDirection)}")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf(ImageScanDirection.Horizontal, ImageScanDirection.Vertical).forEach { direction ->
+                    StepButton(
+                        label = scanDirectionLabel(direction),
+                        selected = state.imageScanDirection == direction,
+                        onClick = { viewModel.setImageScanDirection(direction) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = state.imageBidirectional, onCheckedChange = viewModel::setImageBidirectional)
                 Text("双向扫描")
@@ -447,7 +486,7 @@ private fun FilePage(state: LaserUiState, viewModel: LaserViewModel) {
                 Checkbox(checked = state.imageInvert, onCheckedChange = viewModel::setImageInvert)
                 Text("反相雕刻")
             }
-            Text("图片会生成 M4 动态功率扫描线；SVG 会把 M/L/H/V/Z 线段转换为矢量雕刻路径。第一次实测建议降低功率并空跑。")
+            Text("图片会生成 M4 动态功率扫描线；SVG 会把 M/L/H/V/Z 线段转换为矢量雕刻路径。预设只是起点，第一次实测建议降低功率并空跑。")
         }
     }
 }
@@ -468,6 +507,9 @@ private fun SendPage(state: LaserUiState, viewModel: LaserViewModel) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(onClick = viewModel::startJob, modifier = Modifier.weight(1f)) { Text("开始") }
+                OutlinedButton(onClick = viewModel::previewBoundary, modifier = Modifier.weight(1f)) { Text("边界预跑") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = viewModel::pauseJob, modifier = Modifier.weight(1f)) { Text("暂停") }
                 OutlinedButton(onClick = viewModel::resumeJob, modifier = Modifier.weight(1f)) { Text("继续") }
                 OutlinedButton(onClick = viewModel::stopJob, modifier = Modifier.weight(1f)) { Text("停止") }
@@ -665,8 +707,6 @@ private fun GcodePreview(lines: List<GcodeLine>, bounds: GcodeBounds) {
             .padding(4.dp)
     ) {
         if (!bounds.hasMotion || bounds.width == 0.0 || bounds.height == 0.0) return@Canvas
-        val path = Path()
-        var initialized = false
         var x = 0.0
         var y = 0.0
         fun mapX(value: Double): Float = ((value - bounds.minX) / bounds.width * size.width).toFloat()
@@ -675,17 +715,19 @@ private fun GcodePreview(lines: List<GcodeLine>, bounds: GcodeBounds) {
             val cx = valueAfter(line.command, 'X') ?: x
             val cy = valueAfter(line.command, 'Y') ?: y
             if (GcodeParser.isLinearMotion(line.command)) {
-                if (!initialized) {
-                    path.moveTo(mapX(cx), mapY(cy))
-                    initialized = true
-                } else {
-                    path.lineTo(mapX(cx), mapY(cy))
+                if (line.command.startsWith("G1", true) || line.command.startsWith("G01", true)) {
+                    val power = valueAfter(line.command, 'S')?.coerceIn(0.0, 1000.0)
+                    val alpha = if (power == null) 0.75f else (0.18f + (power / 1000.0 * 0.82f)).toFloat()
+                    drawLine(
+                        color = color.copy(alpha = alpha),
+                        start = Offset(mapX(x), mapY(y)),
+                        end = Offset(mapX(cx), mapY(cy)),
+                    )
                 }
                 x = cx
                 y = cy
             }
         }
-        drawPath(path, color = color)
         drawLine(Color.Gray, Offset.Zero, Offset(size.width, 0f))
     }
 }
@@ -703,4 +745,19 @@ private fun fmt(value: Double): String = "%.2f".format(value)
 
 private fun fmtStep(value: Double): String {
     return if (value >= 1.0) "%.0f".format(value) else "%.2f".format(value).trimEnd('0')
+}
+
+private fun ditherLabel(mode: ImageDitherMode): String {
+    return when (mode) {
+        ImageDitherMode.None -> "无"
+        ImageDitherMode.Ordered -> "有序"
+        ImageDitherMode.FloydSteinberg -> "误差扩散"
+    }
+}
+
+private fun scanDirectionLabel(direction: ImageScanDirection): String {
+    return when (direction) {
+        ImageScanDirection.Horizontal -> "横向"
+        ImageScanDirection.Vertical -> "纵向"
+    }
 }

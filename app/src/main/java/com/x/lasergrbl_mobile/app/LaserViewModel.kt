@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.x.lasergrbl_mobile.core.BoundaryPreviewPlanner
+import com.x.lasergrbl_mobile.core.BoundaryPreviewSettings
 import com.x.lasergrbl_mobile.core.GcodeBounds
 import com.x.lasergrbl_mobile.core.GcodeLine
 import com.x.lasergrbl_mobile.core.GcodeParser
@@ -14,6 +16,9 @@ import com.x.lasergrbl_mobile.core.GrayRaster
 import com.x.lasergrbl_mobile.core.GrblParser
 import com.x.lasergrbl_mobile.core.GrblStatus
 import com.x.lasergrbl_mobile.core.ImageGcodeSettings
+import com.x.lasergrbl_mobile.core.ImageDitherMode
+import com.x.lasergrbl_mobile.core.ImageMaterialPreset
+import com.x.lasergrbl_mobile.core.ImageScanDirection
 import com.x.lasergrbl_mobile.core.ImageToGcodeConverter
 import com.x.lasergrbl_mobile.core.Response
 import com.x.lasergrbl_mobile.core.StreamEvent
@@ -64,6 +69,10 @@ data class LaserUiState(
     val imageTravelRate: Int = 3000,
     val imageMaxPower: Int = 350,
     val imageThreshold: Int = 18,
+    val imageGamma: Double = 1.0,
+    val imageDitherMode: ImageDitherMode = ImageDitherMode.None,
+    val imageScanDirection: ImageScanDirection = ImageScanDirection.Horizontal,
+    val imageMaterialPreset: ImageMaterialPreset = ImageMaterialPreset.Custom,
     val imageBidirectional: Boolean = true,
     val imageInvert: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.System,
@@ -244,6 +253,46 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
         streamer.start(state.job.lines)
     }
 
+    fun previewBoundary() {
+        val state = _uiState.value
+        if (!state.serial.connected) {
+            appendLog("请先连接串口。")
+            return
+        }
+        if (state.progress.running) {
+            appendLog("当前已有任务在发送，请先停止或等待完成。")
+            return
+        }
+        if (!state.safetyArmed) {
+            appendLog("请先开启安全确认，再预跑边界。")
+            return
+        }
+        val bounds = state.job.bounds
+        if (bounds == null || !bounds.hasMotion) {
+            appendLog("当前任务没有可用运动范围，无法预跑边界。")
+            return
+        }
+        if (bounds.width <= 0.0 || bounds.height <= 0.0) {
+            appendLog("当前任务 XY 边界尺寸过小，无法生成边界框。")
+            return
+        }
+
+        val lines = runCatching {
+            BoundaryPreviewPlanner.plan(
+                bounds,
+                BoundaryPreviewSettings(feedRate = state.feedRate.coerceIn(10, 20_000))
+            )
+        }.getOrElse { t ->
+            appendLog("边界框生成失败：${t.message ?: "未知错误"}")
+            return
+        }
+
+        appendLog(
+            "开始边界框预跑：X ${fmt(bounds.minX)} ~ ${fmt(bounds.maxX)}，Y ${fmt(bounds.minY)} ~ ${fmt(bounds.maxY)}，激光保持关闭。"
+        )
+        streamer.start(lines)
+    }
+
     fun pauseJob() = streamer.pause()
     fun resumeJob() = streamer.resume()
     fun stopJob() {
@@ -289,23 +338,73 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setImageLineStepMm(value: Double) {
-        _uiState.value = _uiState.value.copy(imageLineStepMm = value.coerceIn(0.03, 2.0))
+        _uiState.value = _uiState.value.copy(
+            imageLineStepMm = value.coerceIn(0.03, 2.0),
+            imageMaterialPreset = ImageMaterialPreset.Custom,
+        )
     }
 
     fun setImageFeedRate(value: Int) {
-        _uiState.value = _uiState.value.copy(imageFeedRate = value.coerceIn(10, 20000))
+        _uiState.value = _uiState.value.copy(
+            imageFeedRate = value.coerceIn(10, 20000),
+            imageMaterialPreset = ImageMaterialPreset.Custom,
+        )
     }
 
     fun setImageTravelRate(value: Int) {
-        _uiState.value = _uiState.value.copy(imageTravelRate = value.coerceIn(10, 20000))
+        _uiState.value = _uiState.value.copy(
+            imageTravelRate = value.coerceIn(10, 20000),
+            imageMaterialPreset = ImageMaterialPreset.Custom,
+        )
     }
 
     fun setImageMaxPower(value: Int) {
-        _uiState.value = _uiState.value.copy(imageMaxPower = value.coerceIn(1, 1000))
+        _uiState.value = _uiState.value.copy(
+            imageMaxPower = value.coerceIn(1, 1000),
+            imageMaterialPreset = ImageMaterialPreset.Custom,
+        )
     }
 
     fun setImageThreshold(value: Int) {
-        _uiState.value = _uiState.value.copy(imageThreshold = value.coerceIn(0, 255))
+        _uiState.value = _uiState.value.copy(
+            imageThreshold = value.coerceIn(0, 255),
+            imageMaterialPreset = ImageMaterialPreset.Custom,
+        )
+    }
+
+    fun setImageGamma(value: Double) {
+        _uiState.value = _uiState.value.copy(
+            imageGamma = value.coerceIn(0.1, 5.0),
+            imageMaterialPreset = ImageMaterialPreset.Custom,
+        )
+    }
+
+    fun setImageDitherMode(value: ImageDitherMode) {
+        _uiState.value = _uiState.value.copy(
+            imageDitherMode = value,
+            imageMaterialPreset = ImageMaterialPreset.Custom,
+        )
+    }
+
+    fun setImageScanDirection(value: ImageScanDirection) {
+        _uiState.value = _uiState.value.copy(imageScanDirection = value)
+    }
+
+    fun setImageMaterialPreset(value: ImageMaterialPreset) {
+        _uiState.value = if (value == ImageMaterialPreset.Custom) {
+            _uiState.value.copy(imageMaterialPreset = value)
+        } else {
+            _uiState.value.copy(
+                imageMaterialPreset = value,
+                imageLineStepMm = value.lineStepMm,
+                imageFeedRate = value.feedRate,
+                imageTravelRate = value.travelRate,
+                imageMaxPower = value.maxPower,
+                imageThreshold = value.burnThreshold,
+                imageGamma = value.gamma,
+                imageDitherMode = value.ditherMode,
+            )
+        }
     }
 
     fun setImageBidirectional(value: Boolean) {
@@ -400,6 +499,9 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
             travelRate = state.imageTravelRate,
             maxPower = state.imageMaxPower,
             burnThreshold = state.imageThreshold,
+            gamma = state.imageGamma,
+            ditherMode = state.imageDitherMode,
+            scanDirection = state.imageScanDirection,
             bidirectional = state.imageBidirectional,
             invert = state.imageInvert,
         )
