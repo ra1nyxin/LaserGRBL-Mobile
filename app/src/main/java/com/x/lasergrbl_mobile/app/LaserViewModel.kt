@@ -31,6 +31,8 @@ import com.x.lasergrbl_mobile.serial.SerialDeviceInfo
 import com.x.lasergrbl_mobile.serial.SerialState
 import com.x.lasergrbl_mobile.serial.UsbSerialController
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,6 +83,7 @@ data class LaserUiState(
     val svgLayerControls: List<SvgLayerControl> = defaultSvgLayerControls(),
     val themeMode: ThemeMode = ThemeMode.System,
     val safetyArmed: Boolean = false,
+    val startCountdownSeconds: Int = 0,
 )
 
 data class SvgLayerControl(
@@ -107,6 +110,7 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("lasergrbl_mobile", Application.MODE_PRIVATE)
     private val serialController = UsbSerialController(application, viewModelScope)
     private val streamer = GcodeStreamer(viewModelScope, serialController)
+    private var startCountdownJob: Job? = null
 
     private val _uiState = MutableStateFlow(LaserUiState())
     val uiState: StateFlow<LaserUiState> = _uiState.asStateFlow()
@@ -268,6 +272,10 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
             appendLog("请先连接串口。")
             return
         }
+        if (state.progress.running || state.startCountdownSeconds > 0) {
+            appendLog("当前已有任务在发送或等待启动。")
+            return
+        }
         if (!state.safetyArmed) {
             appendLog("请先开启安全确认，再开始加工。")
             return
@@ -276,8 +284,24 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
             appendLog("请先选择 G-code 文件。")
             return
         }
-        appendLog("开始发送任务：${state.job.fileName}")
-        streamer.start(state.job.lines)
+
+        startCountdownJob?.cancel()
+        startCountdownJob = viewModelScope.launch {
+            appendLog("任务将在 3 秒后开始：${state.job.fileName}")
+            for (seconds in 3 downTo 1) {
+                _uiState.value = _uiState.value.copy(startCountdownSeconds = seconds)
+                delay(1000)
+            }
+            _uiState.value = _uiState.value.copy(startCountdownSeconds = 0)
+
+            val latest = _uiState.value
+            if (!latest.serial.connected || !latest.safetyArmed || latest.job.lines.isEmpty()) {
+                appendLog("启动前状态变化，已取消任务。")
+                return@launch
+            }
+            appendLog("开始发送任务：${latest.job.fileName}")
+            streamer.start(latest.job.lines)
+        }
     }
 
     fun previewBoundary() {
@@ -323,6 +347,9 @@ class LaserViewModel(application: Application) : AndroidViewModel(application) {
     fun pauseJob() = streamer.pause()
     fun resumeJob() = streamer.resume()
     fun stopJob() {
+        startCountdownJob?.cancel()
+        startCountdownJob = null
+        _uiState.value = _uiState.value.copy(startCountdownSeconds = 0)
         streamer.stop()
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { serialController.writeRealtime("!") }

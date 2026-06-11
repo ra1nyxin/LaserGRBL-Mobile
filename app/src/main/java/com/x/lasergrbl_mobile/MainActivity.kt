@@ -3,6 +3,7 @@ package com.x.lasergrbl_mobile
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -33,6 +34,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -528,6 +530,7 @@ private fun SvgLayerControlRow(control: SvgLayerControl, viewModel: LaserViewMod
 
 @Composable
 private fun SendPage(state: LaserUiState, viewModel: LaserViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     PageColumn {
         SectionCard("任务发送") {
             LinearProgressIndicator(progress = { state.progress.percent }, modifier = Modifier.fillMaxWidth())
@@ -541,7 +544,22 @@ private fun SendPage(state: LaserUiState, viewModel: LaserViewModel) {
                 Text("我已确认护目镜、防火、急停和材料固定")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = viewModel::startJob, modifier = Modifier.weight(1f)) { Text("开始") }
+                MainStartStopButton(
+                    state = state,
+                    onStart = {
+                        if (!state.safetyArmed) {
+                            Toast.makeText(
+                                context,
+                                "你竟然不准备护目镜，哼，不给你启动喵！眼睛瞎了不管喵",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        } else {
+                            viewModel.startJob()
+                        }
+                    },
+                    onStop = viewModel::stopJob,
+                    modifier = Modifier.weight(1f),
+                )
                 OutlinedButton(onClick = viewModel::previewBoundary, modifier = Modifier.weight(1f)) { Text("边界预跑") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -566,6 +584,40 @@ private fun SendPage(state: LaserUiState, viewModel: LaserViewModel) {
                 OutlinedButton(onClick = { viewModel.sendRealtime("?") }, modifier = Modifier.weight(1f)) { Text("状态 ?") }
             }
         }
+    }
+}
+
+@Composable
+private fun MainStartStopButton(
+    state: LaserUiState,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val waiting = state.startCountdownSeconds > 0
+    val running = state.progress.running
+    val enabled = if (running) true else state.serial.connected && state.job.loaded && !waiting
+    val label = when {
+        running -> "停止"
+        waiting -> "请等待${state.startCountdownSeconds}秒"
+        else -> "开始"
+    }
+    val colors = if (running) {
+        ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.error,
+            contentColor = MaterialTheme.colorScheme.onError,
+        )
+    } else {
+        ButtonDefaults.buttonColors()
+    }
+
+    Button(
+        onClick = { if (running) onStop() else onStart() },
+        enabled = enabled,
+        colors = colors,
+        modifier = modifier,
+    ) {
+        Text(label, maxLines = 1)
     }
 }
 
